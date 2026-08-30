@@ -941,3 +941,25 @@ func publicTables(database *sql.DB) ([]string, error) {
 	}
 	return tables, rows.Err()
 }
+
+// A rejected password must come back as an error the caller can act on, not
+// something that takes the process down. It used to be fatal at boot, which
+// crash-looped the container and surfaced as a bare 502 from the proxy.
+func TestWeakBootstrapPasswordIsAnErrorNotAPanic(t *testing.T) {
+	database := newTestDB(t)
+
+	_, err := CreateUser(context.Background(), database, "op@example.com", "short")
+	if err == nil {
+		t.Fatal("a five-character password was accepted")
+	}
+	// The message has to name the actual requirement, or an operator reading
+	// container logs cannot tell what to change.
+	if !strings.Contains(err.Error(), "12") {
+		t.Errorf("error does not state the minimum length: %v", err)
+	}
+
+	// And the database is left usable.
+	if _, err := CreateUser(context.Background(), database, "op@example.com", "a long enough passphrase"); err != nil {
+		t.Errorf("a valid account could not be created afterwards: %v", err)
+	}
+}

@@ -47,8 +47,14 @@ func main() {
 	if err := bootstrap(database, cfg); err != nil {
 		log.Fatal(err)
 	}
+	// Deliberately not fatal. Failing to create a convenience account is not a
+	// reason to take down a working router: a rejected ADMIN_PASSWORD used to
+	// crash-loop the container, which surfaces to users as a bare 502 from the
+	// proxy with nothing to suggest the password was the problem.
 	if err := bootstrapAdminUser(database, cfg); err != nil {
-		log.Fatal(err)
+		log.Printf("WARNING: could not create the first operator account: %v", err)
+		log.Print("WARNING: the gateway is running, but the dashboard has no way in. " +
+			"Fix ADMIN_PASSWORD and redeploy, or set ADMIN_TOKEN.")
 	}
 
 	catalog, err := cfg.Catalog()

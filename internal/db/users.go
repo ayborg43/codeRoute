@@ -65,7 +65,8 @@ func ValidatePassword(password string) error {
 	const minLength = 12
 
 	if len([]rune(password)) < minLength {
-		return fmt.Errorf("password must be at least %d characters", minLength)
+		return fmt.Errorf("password must be at least %d characters, got %d",
+			minLength, len([]rune(password)))
 	}
 	// bcrypt silently truncates beyond 72 bytes, which would make a long
 	// passphrase weaker than it looks.
