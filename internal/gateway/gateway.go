@@ -531,7 +531,8 @@ func (g *Gateway) freeNamed(model string, keys map[string]string) []candidate {
 // provider so failover moves between vendors rather than retrying one.
 func (g *Gateway) freeCandidates(keys map[string]string, task routing.TaskType, intent sentinelIntent) []candidate {
 	pool := g.restrictToTagged(g.catalog.FreeModels(), task)
-	return g.pickOnePerProvider(g.catalog.RankForTask(pool, task, g.objectiveFor(intent)), keys)
+	pool = g.catalog.RankForTask(pool, task, g.objectiveFor(intent))
+	return g.pickOnePerProvider(g.catalog.PreferConfirmed(pool), keys)
 }
 
 // restrictToTagged narrows a pool to the models an operator marked for the
@@ -605,6 +606,11 @@ func (g *Gateway) discoveredCandidates(keys map[string]string, task routing.Task
 		return !sa && sb
 	})
 
+	// Models a probe has confirmed working move to the front. Applied last so
+	// it outranks price and inference: knowing a model answers for this
+	// account is worth more than knowing it is cheap.
+	pool = g.catalog.PreferConfirmed(pool)
+
 	return g.pickOnePerProvider(pool, keys)
 }
 
@@ -650,7 +656,16 @@ func (g *Gateway) pickOnePerProvider(pool []routing.ModelProfile, keys map[strin
 		}
 	}
 
+	// The cap must never stop a provider being tried once. With more providers
+	// than the cap, truncating the first round silently excluded the ones at
+	// the end of it — a deployment with eleven providers and a cap of eight
+	// would never reach three of them, however healthy they were. The cap is
+	// really about how many *retries* to spend, so it applies from the second
+	// round on.
 	limit := g.cfg.MaxAttempts
+	if limit < len(order) {
+		limit = len(order)
+	}
 	if limit < 1 {
 		limit = 1
 	}

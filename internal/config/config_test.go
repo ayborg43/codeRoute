@@ -14,14 +14,16 @@ import (
 // exactly one thing and see that Validate notices.
 func baseConfig() *Config {
 	return &Config{
-		EncryptionKey:       []byte("0123456789abcdef"),
-		RoutingMode:         "auto",
-		RoutingObjective:    "balanced",
-		Providers:           provider.Presets(),
-		AttemptsPerProvider: 2,
-		ObservationWindow:   6 * time.Hour,
-		MaxAttempts:         8,
-		Cache:               CacheConfig{Enabled: true, Threshold: 0.95, TTL: time.Hour},
+		EncryptionKey:          []byte("0123456789abcdef"),
+		RoutingMode:            "auto",
+		RoutingObjective:       "balanced",
+		Providers:              provider.Presets(),
+		AttemptsPerProvider:    2,
+		ObservationWindow:      6 * time.Hour,
+		ProbeModelsPerProvider: 3,
+		ProbeFreshness:         24 * time.Hour,
+		MaxAttempts:            8,
+		Cache:                  CacheConfig{Enabled: true, Threshold: 0.95, TTL: time.Hour},
 	}
 }
 
@@ -204,6 +206,12 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.LatencyFeedback != 5*time.Minute {
 		t.Errorf("default latency feedback = %s", cfg.LatencyFeedback)
 	}
+	if cfg.ProbeInterval != 6*time.Hour {
+		t.Errorf("default probe interval = %s", cfg.ProbeInterval)
+	}
+	if cfg.ProbeModelsPerProvider != 3 {
+		t.Errorf("default probe breadth = %d", cfg.ProbeModelsPerProvider)
+	}
 	if cfg.ObservationWindow != 6*time.Hour {
 		t.Errorf("default observation window = %s; a zero window makes every score meaningless",
 			cfg.ObservationWindow)
@@ -257,6 +265,9 @@ func TestEveryDocumentedEnvVarIsRead(t *testing.T) {
 		"FREE_ONLY":                     {"true", func(c *Config) bool { return c.FreeOnly }},
 		"DISCOVERY_INTERVAL":            {"7h", func(c *Config) bool { return c.DiscoveryInterval == 7*time.Hour }},
 		"OBSERVATION_WINDOW":            {"9h", func(c *Config) bool { return c.ObservationWindow == 9*time.Hour }},
+		"PROBE_INTERVAL":                {"4h", func(c *Config) bool { return c.ProbeInterval == 4*time.Hour }},
+		"PROBE_MODELS_PER_PROVIDER":     {"7", func(c *Config) bool { return c.ProbeModelsPerProvider == 7 }},
+		"PROBE_FRESHNESS":               {"48h", func(c *Config) bool { return c.ProbeFreshness == 48*time.Hour }},
 		"LATENCY_FEEDBACK_INTERVAL":     {"8m", func(c *Config) bool { return c.LatencyFeedback == 8*time.Minute }},
 		"CACHE_ENABLED":                 {"false", func(c *Config) bool { return !c.Cache.Enabled }},
 		"CACHE_THRESHOLD":               {"0.77", func(c *Config) bool { return c.Cache.Threshold == 0.77 }},

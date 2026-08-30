@@ -52,6 +52,8 @@ A revoked key gets `401`. Nothing else is enforced against a caller.
 | `GET /api/keys` | Client keys, with when each was created and last used |
 | `GET /api/catalogue` | Every model the providers serve; `?free=true`, `?provider=` to narrow |
 | `POST /api/discover` | Re-read every provider's model list now |
+| `POST /api/probe` | Send a trial completion to each candidate model now |
+| `GET /api/probes` | What the last sweep found |
 | `GET /api/route?model=` | The chain a request would follow, without sending one |
 | `GET /api/scores?task=` | What this deployment's traffic says about each model |
 | `GET` / `PUT /v1/admin/model-tags` | Mark which models are for which kind of work |
@@ -98,7 +100,10 @@ A revoked key gets `401`. Nothing else is enforced against a caller.
 | `LATENCY_FEEDBACK_INTERVAL` | `5m` | How often observed behaviour is folded back into ranking; `0` disables |
 | `OBSERVATION_WINDOW` | `6h` | How far back routing looks when judging a model |
 | `ROUTING_ATTEMPTS_PER_PROVIDER` | `2` | Models one request may try at each provider before moving on |
-| `ROUTING_MAX_ATTEMPTS` | `8` | Hard cap on upstream calls for a single request |
+| `ROUTING_MAX_ATTEMPTS` | `8` | Cap on *retries*; every provider is always tried at least once |
+| `PROBE_INTERVAL` | `6h` | How often to check which models actually work; `0` disables |
+| `PROBE_MODELS_PER_PROVIDER` | `3` | How many models a sweep checks at each provider |
+| `PROBE_FRESHNESS` | `24h` | How long a probe result is trusted |
 
 ### Semantic cache
 
@@ -178,6 +183,35 @@ alone does not say where to send a request. Pin one explicitly with
 
 The cached list survives restarts, and a provider that fails to answer keeps
 its previous list rather than having its models vanish.
+
+### Knowing which models actually work
+
+Discovery tells you what a provider *serves*. It does not tell you what your
+account may *use* — entitlements, deposits and daily allowances all differ, and
+a list of eight hundred models routinely contains a few dozen you can reach.
+
+Routing used to find that out the hard way, with real requests doing the
+discovery and paying for it in latency and failures. Probing does it in
+advance: a trial completion of one token, sent on `PROBE_INTERVAL`, to the
+models routing would actually reach. Models that answer are tried first;
+models that refuse are set aside and the reason recorded.
+
+It is deliberately bounded. Probing every model at every provider would cost
+real money and burn the very free allowances it exists to protect, so a sweep
+takes the head of each provider's ranked list — `PROBE_MODELS_PER_PROVIDER`,
+three by default — plus anything you have marked, since routing is restricted
+to those.
+
+**Confirmed working is a preference, not a filter.** A model nobody has probed
+is unknown, not broken, so it stays in the chain behind the confirmed ones.
+Results expire after `PROBE_FRESHNESS`, because an account that had credit
+yesterday may not today.
+
+Changing a provider's key discards its probe results: what an old key could
+reach says nothing about a new one.
+
+The dashboard's **Check which work** button runs a sweep on demand, for when
+you have just fixed a billing problem and would rather not wait.
 
 ### Free models
 

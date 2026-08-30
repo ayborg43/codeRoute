@@ -364,3 +364,208 @@ func TestSecondModelAtTheSameProviderRescuesTheRequest(t *testing.T) {
 		t.Errorf("made %d upstream calls, want 2 (the retired model then the good one)", calls.Load())
 	}
 }
+
+// The attempt cap bounds retries; it must never stop a provider being tried at
+// all. A deployment with more providers than the cap was silently never
+// reaching the ones at the end of the list.
+func TestEveryProviderIsTriedEvenBeyondTheCap(t *testing.T) {
+	g := testGateway(t, "auto", "balanced")
+	g.cfg.AttemptsPerProvider = 2
+	g.cfg.MaxAttempts = 8
+
+	keys := map[string]string{}
+	names := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"}
+	for _, n := range names {
+		g.catalog.SetDiscovered(n, []provider.DiscoveredModel{
+			{Provider: n, Model: n + "-1", PriceKnown: true},
+			{Provider: n, Model: n + "-2", PriceKnown: true},
+		})
+		keys[n] = "k"
+	}
+
+	cands, _ := g.plan(chatRequest(), keys)
+
+	reached := map[string]bool{}
+	for _, c := range cands {
+		reached[c.provider] = true
+	}
+	for _, n := range names {
+		if !reached[n] {
+			t.Errorf("provider %q was never tried; the cap excluded it entirely", n)
+		}
+	}
+	// Eleven providers means at least eleven attempts, cap of eight or not.
+	if len(cands) < len(names) {
+		t.Errorf("chain is %d long for %d providers", len(cands), len(names))
+	}
+}
+
+// With fewer providers than the cap it still bounds retries as before.
+func TestCapStillBoundsRetriesWhenProvidersAreFew(t *testing.T) {
+	g := testGateway(t, "auto", "balanced")
+	g.cfg.AttemptsPerProvider = 3
+	g.cfg.MaxAttempts = 4
+
+	keys := map[string]string{}
+	for _, n := range []string{"a", "b"} {
+		var models []provider.DiscoveredModel
+		for i := 0; i < 3; i++ {
+			models = append(models, provider.DiscoveredModel{
+				Provider: n, Model: fmt.Sprintf("%s-%d", n, i), PriceKnown: true,
+			})
+		}
+		g.catalog.SetDiscovered(n, models)
+		keys[n] = "k"
+	}
+
+	if got := len(g.mustPlan(t, keys)); got != 4 {
+		t.Errorf("chain is %d long, want the cap of 4", got)
+	}
+}
+
+// mustPlan is a small helper for the assertion above.
+func (g *Gateway) mustPlan(t *testing.T, keys map[string]string) []candidate {
+	t.Helper()
+	cands, _ := g.plan(chatRequest(), keys)
+	return cands
+}
+
+// A probe result is evidence about this account, so a confirmed model should
+// be reached before one nothing is known about — even a cheaper one.
+func TestConfirmedModelsAreTriedFirst(t *testing.T) {
+	g := testGateway(t, "auto", "cost")
+	g.cfg.AttemptsPerProvider = 3
+
+	g.catalog.SetDiscovered("p", []provider.DiscoveredModel{
+		{Provider: "p", Model: "cheap-unknown", PriceKnown: true},
+		{Provider: "p", Model: "dearer-confirmed", InputCostPer1M: 4, OutputCostPer1M: 4, PriceKnown: true},
+	})
+
+	// Before any probe, price decides.
+	cands, _ := g.plan(chatRequest(), keysFor("p"))
+	if len(cands) == 0 || cands[0].model != "cheap-unknown" {
+		t.Fatalf("before probing, chain = %+v", cands)
+	}
+
+	g.catalog.SetConfirmed(map[string]bool{
+		routing.TagKey("p", "dearer-confirmed"): true,
+	})
+
+	cands, _ = g.plan(chatRequest(), keysFor("p"))
+	if len(cands) == 0 || cands[0].model != "dearer-confirmed" {
+		t.Errorf("chain leads with %+v; a confirmed model should come first", cands)
+	}
+	// The unconfirmed one is kept as a fallback, not discarded: not probed is
+	// not the same as broken.
+	if len(cands) < 2 {
+		t.Error("the unprobed model was dropped rather than kept as a fallback")
+	}
+}
+
+// Until a sweep has run there is nothing to prefer, and treating everything as
+// unconfirmed must not change the order.
+func TestUnprobedDeploymentsAreUnaffected(t *testing.T) {
+	c := routing.NewCatalog()
+	pool := []routing.ModelProfile{
+		{Provider: "a", Model: "one"}, {Provider: "b", Model: "two"},
+	}
+
+	got := c.PreferConfirmed(pool)
+	if len(got) != 2 || got[0].Model != "one" {
+		t.Errorf("an unprobed catalogue was reordered: %+v", got)
+	}
+}
+
+// A probe that succeeds clears an earlier sidelining: entitlements change, and
+// a model that has just answered is working whatever happened an hour ago.
+func TestASuccessfulProbeClearsTheBench(t *testing.T) {
+	g := testGateway(t, "auto", "balanced")
+	c := candidate{provider: "p", model: "recovered"}
+
+	g.benchIfAccessDenied(c, errors.New("p returned 403: no credit"))
+	if !g.benched(c) {
+		t.Fatal("precondition: the model should be benched")
+	}
+
+	g.unbench(c)
+	if g.benched(c) {
+		t.Error("a model shown to work is still sidelined")
+	}
+}
+
+// The sweep is bounded: probing every model at every provider would cost real
+// money and burn the free allowances it exists to protect.
+func TestProbeTargetsAreBounded(t *testing.T) {
+	g := testGateway(t, "auto", "balanced")
+	g.cfg.ProbeModelsPerProvider = 2
+
+	keys := map[string]string{}
+	for _, name := range []string{"a", "b", "c"} {
+		var models []provider.DiscoveredModel
+		for i := 0; i < 50; i++ {
+			models = append(models, provider.DiscoveredModel{
+				Provider: name, Model: fmt.Sprintf("%s-%02d", name, i), PriceKnown: true,
+			})
+		}
+		g.catalog.SetDiscovered(name, models)
+		keys[name] = "k"
+	}
+
+	targets := g.probeTargets(keys)
+	if len(targets) != 6 {
+		t.Errorf("probing %d models across 3 providers, want 2 each", len(targets))
+	}
+
+	counts := map[string]int{}
+	for _, c := range targets {
+		counts[c.provider]++
+	}
+	for name, n := range counts {
+		if n != 2 {
+			t.Errorf("provider %s got %d probes", name, n)
+		}
+	}
+}
+
+// Marked models are probed whatever their ranking: routing is restricted to
+// them, so their health matters more than anything else's.
+func TestMarkedModelsAreAlwaysProbed(t *testing.T) {
+	g := testGateway(t, "auto", "balanced")
+	g.cfg.ProbeModelsPerProvider = 1
+
+	var models []provider.DiscoveredModel
+	for i := 0; i < 20; i++ {
+		models = append(models, provider.DiscoveredModel{
+			Provider: "p", Model: fmt.Sprintf("m-%02d", i), PriceKnown: true,
+		})
+	}
+	g.catalog.SetDiscovered("p", models)
+	// Mark one buried deep in the list.
+	g.catalog.SetTags(map[string][]routing.TaskType{
+		routing.TagKey("p", "m-17"): {routing.TaskCodeGeneration},
+	})
+
+	var found bool
+	for _, c := range g.probeTargets(keysFor("p")) {
+		if c.model == "m-17" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("a marked model was not probed, though routing is restricted to it")
+	}
+}
+
+// A provider with no key is never probed — there is nothing to probe with.
+func TestUnkeyedProvidersAreNotProbed(t *testing.T) {
+	g := testGateway(t, "auto", "balanced")
+
+	g.catalog.SetDiscovered("keyed", []provider.DiscoveredModel{{Provider: "keyed", Model: "m"}})
+	g.catalog.SetDiscovered("unkeyed", []provider.DiscoveredModel{{Provider: "unkeyed", Model: "m"}})
+
+	for _, c := range g.probeTargets(keysFor("keyed")) {
+		if c.provider == "unkeyed" {
+			t.Error("probed a provider with no key")
+		}
+	}
+}

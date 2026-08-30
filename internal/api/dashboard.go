@@ -28,6 +28,8 @@ func (h *Handler) registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/models", h.dashboardModels)
 	mux.HandleFunc("GET /api/catalogue", h.dashboardCatalogue)
 	mux.HandleFunc("POST /api/discover", h.dashboardDiscover)
+	mux.HandleFunc("POST /api/probe", h.dashboardProbe)
+	mux.HandleFunc("GET /api/probes", h.dashboardProbes)
 	mux.HandleFunc("GET /api/route", h.dashboardRoute)
 	mux.HandleFunc("GET /api/new-models", h.dashboardNewModels)
 	mux.HandleFunc("GET /api/scores", h.dashboardScores)
@@ -183,6 +185,16 @@ func (h *Handler) dashboardCatalogue(w http.ResponseWriter, r *http.Request) {
 
 	catalogue := h.gw.Catalog()
 
+	probes, err := db.ListProbes(r.Context(), h.db)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error(), "internal_error")
+		return
+	}
+	probed := make(map[string]db.ProbeResult, len(probes))
+	for _, p := range probes {
+		probed[db.TagKey(p.Provider, p.Model)] = p
+	}
+
 	data := make([]map[string]any, 0, len(pool))
 	for _, p := range pool {
 		tags := catalogue.TagsFor(p.Provider, p.Model)
@@ -200,6 +212,14 @@ func (h *Handler) dashboardCatalogue(w http.ResponseWriter, r *http.Request) {
 		if p.PriceKnown {
 			entry["input_cost_per_1m"] = p.InputCostPer1M
 			entry["output_cost_per_1m"] = p.OutputCostPer1M
+		}
+		// Absent rather than false when unprobed: the dashboard distinguishes
+		// "did not work" from "nobody has checked".
+		if pr, ok := probed[db.TagKey(p.Provider, p.Model)]; ok {
+			entry["probe"] = pr.OK
+			if pr.Failure != "" {
+				entry["probe_failure"] = pr.Failure
+			}
 		}
 		data = append(data, entry)
 	}
@@ -395,6 +415,52 @@ func (h *Handler) dashboardPutSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"free_only":   h.gw.FreeOnly(),
 		"free_models": free,
+	})
+}
+
+// dashboardProbe runs a sweep on demand, for an operator who has just fixed a
+// billing problem and does not want to wait for the next scheduled one.
+func (h *Handler) dashboardProbe(w http.ResponseWriter, r *http.Request) {
+	if !h.dashboardAuthorized(w, r) {
+		return
+	}
+
+	summary, err := h.gw.ProbeModels(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error(), "upstream_error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, summary)
+}
+
+// dashboardProbes reports what the last sweep found.
+func (h *Handler) dashboardProbes(w http.ResponseWriter, r *http.Request) {
+	if !h.dashboardAuthorized(w, r) {
+		return
+	}
+
+	results, err := db.ListProbes(r.Context(), h.db)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error(), "internal_error")
+		return
+	}
+
+	working := 0
+	for _, p := range results {
+		if p.OK {
+			working++
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"object":    "list",
+		"data":      results,
+		"working":   working,
+		"checked":   len(results),
+		"freshness": h.cfg.ProbeFreshness.String(),
+		"note": "a trial completion sent on a schedule to the models routing would " +
+			"reach, so a real request does not have to discover that one is unusable",
 	})
 }
 

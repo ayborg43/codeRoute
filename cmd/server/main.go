@@ -84,6 +84,10 @@ func main() {
 		log.Printf("could not load model markings: %v", err)
 	}
 	gw.StartDiscovery(ctx, cfg.DiscoveryInterval)
+	if err := gw.LoadConfirmedModels(ctx); err != nil {
+		log.Printf("could not load probe results: %v", err)
+	}
+	gw.StartProbing(ctx, cfg.ProbeInterval)
 	gw.StartLatencyFeedback(ctx, cfg.LatencyFeedback)
 	startSessionSweeper(ctx, database)
 

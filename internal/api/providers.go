@@ -162,8 +162,13 @@ func (h *Handler) adminSetProviderKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A new key may carry different entitlements, so models sidelined under
-	// the old one get another chance.
+	// the old one get another chance — and what an old key was confirmed to
+	// reach says nothing about a new one.
 	h.gw.ClearBench()
+	if err := db.ForgetProbes(r.Context(), h.db, name); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error(), "internal_error")
+		return
+	}
 
 	// The fingerprint goes back so the caller can confirm which key landed
 	// without the key itself being echoed anywhere.

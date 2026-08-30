@@ -216,6 +216,8 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-off
        counts as free only when its provider publishes a zero price &mdash;
        an unpriced model is never assumed free, which is what keeps
        <code>auto:free</code> from quietly spending money.<br>
+       <strong>Confirmed</strong> means a trial completion succeeded recently,
+       so routing reaches for it first. Unchecked is not the same as broken.<br>
        <strong>Use for</strong> marks a model for a kind of work. Once any
        model is marked for a task, <code>auto:code</code> or
        <code>auto:chat</code> will use <em>only</em> the marked ones &mdash; a
@@ -229,12 +231,13 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-off
       <select id="provider-filter"><option value="">All providers</option></select>
       <input id="model-filter" placeholder="Filter by name" style="width:200px">
       <button class="btn ghost small" id="rediscover">Refresh from providers</button>
+      <button class="btn ghost small" id="probe">Check which work</button>
       <span id="catalogue-summary" class="muted" style="font-size:.75rem"></span>
     </div>
     <div class="scroll" style="max-height:22rem;overflow-y:auto">
       <table>
-        <thead><tr><th>Model</th><th>Provider</th><th>Input $/1M</th><th>Output $/1M</th><th>Use for</th></tr></thead>
-        <tbody id="catalogue"><tr><td colspan="5" class="muted">Loading&hellip;</td></tr></tbody>
+        <thead><tr><th>Model</th><th>Provider</th><th>Works</th><th>Input $/1M</th><th>Output $/1M</th><th>Use for</th></tr></thead>
+        <tbody id="catalogue"><tr><td colspan="6" class="muted">Loading&hellip;</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -662,8 +665,17 @@ function renderCatalogue() {
       '" data-tag-provider="' + esc(m.provider) + '" data-tag-model="' + esc(m.model) +
       '" data-tag-task="' + task + '">' + label + '</button>').join('');
 
+    // "not checked" is deliberately not styled as a failure: a model nobody
+    // has probed is unknown, not broken.
+    const works = m.probe === undefined
+      ? '<span class="muted">not checked</span>'
+      : m.probe
+        ? '<span class="status-ok">yes</span>'
+        : '<span class="status-err" title="' + esc(m.probe_failure || '') + '">no &#9432;</span>';
+
     return '<tr><td class="mono">' + esc(m.model) + '</td>' +
       '<td>' + esc(m.provider) + '</td>' +
+      '<td>' + works + '</td>' +
       '<td>' + price(m.input_cost_per_1m) + '</td>' +
       '<td>' + price(m.output_cost_per_1m) + '</td>' +
       '<td>' + buttons + '</td></tr>';
@@ -698,6 +710,25 @@ async function toggleTag(button) {
     button.classList.toggle('on', tasks.has(task));
     await loadCatalogue();
   } catch (e) { handle(e); }
+  button.disabled = false;
+}
+
+// A sweep sends one tiny completion per candidate model, so it takes a few
+// seconds and the button has to say so rather than looking stuck.
+async function runProbe(button) {
+  const label = button.textContent;
+  button.textContent = 'Checking…';
+  button.disabled = true;
+  try {
+    banner('');
+    const d = await api('/api/probe', {method: 'POST'});
+    await loadCatalogue();
+    $('catalogue-summary').textContent =
+      d.checked === 0
+        ? 'nothing to check — add a provider key first'
+        : num(d.working) + ' of ' + num(d.checked) + ' models answered (' + esc(d.duration) + ')';
+  } catch (e) { handle(e); }
+  button.textContent = label;
   button.disabled = false;
 }
 
@@ -1038,6 +1069,7 @@ $('pg-prompt').addEventListener('keydown', ev => {
 });
 $('model-filter').addEventListener('input', renderCatalogue);
 $('rediscover').addEventListener('click', ev => rediscover(ev.currentTarget));
+$('probe').addEventListener('click', ev => runProbe(ev.currentTarget));
 $('new-key-name').addEventListener('keydown', ev => { if (ev.key === 'Enter') createKey(); });
 
 // Whether a session exists is the server's business, not this page's: ask.
