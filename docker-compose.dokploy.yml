@@ -37,12 +37,19 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       ROUTING_MODE: ${ROUTING_MODE:-auto}
       ROUTING_OBJECTIVE: ${ROUTING_OBJECTIVE:-balanced}
+      ROUTER_MODEL: ${ROUTER_MODEL:-auto}
+      ROUTING_ATTEMPTS_PER_PROVIDER: ${ROUTING_ATTEMPTS_PER_PROVIDER:-2}
+      ROUTING_MAX_ATTEMPTS: ${ROUTING_MAX_ATTEMPTS:-8}
       # The first operator account, read only when no account exists.
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       # A shared token for scripts; people sign in with the email above.
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
-      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+      # Defaults to true here, unlike the code, because this file describes a
+      # deployment that is by definition behind Traefik. Without it the
+      # gateway only ever sees plain HTTP and the session cookie is never
+      # marked Secure, however good the certificate out front is.
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
       CACHE_ENABLED: ${CACHE_ENABLED:-true}
       CACHE_THRESHOLD: ${CACHE_THRESHOLD:-0.95}
       CACHE_TTL: ${CACHE_TTL:-24h}
@@ -54,6 +61,10 @@ services:
       DISCOVERY_INTERVAL: ${DISCOVERY_INTERVAL:-24h}
       OBSERVATION_WINDOW: ${OBSERVATION_WINDOW:-6h}
       MODEL_CATALOG: ${MODEL_CATALOG:-}
+      MODEL_CATALOG_PATH: ${MODEL_CATALOG_PATH:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      GOOGLE_BASE_URL: ${GOOGLE_BASE_URL:-}
       LATENCY_FEEDBACK_INTERVAL: ${LATENCY_FEEDBACK_INTERVAL:-5m}
       DEFAULT_MODEL: ${DEFAULT_MODEL:-gpt-4o-mini}
       MQTT_BROKER: ${MQTT_BROKER:-}

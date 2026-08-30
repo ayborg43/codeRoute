@@ -78,9 +78,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: golangci/golangci-lint-action@v6
+      # v7 was the first action release to run golangci-lint v2, which is what
+      # .golangci.yml is written for — v6 installs v1 and cannot read a
+      # `version: "2"` config at all. The linter version is pinned rather than
+      # tracking latest so a new release upstream cannot fail this repository's
+      # build without anyone changing anything here.
+      - uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: v2.13.2
 
   docker:
     runs-on: ubuntu-latest
