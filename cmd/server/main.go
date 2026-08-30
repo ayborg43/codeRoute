@@ -1,15 +1,22 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/coderouter/coderouter/internal/api"
 	"github.com/coderouter/coderouter/internal/config"
 	"github.com/coderouter/coderouter/internal/db"
 	"github.com/coderouter/coderouter/internal/gateway"
 	"github.com/coderouter/coderouter/internal/iot"
+	"github.com/coderouter/coderouter/migrations"
 )
 
 func main() {
@@ -27,18 +34,48 @@ func main() {
 	}
 	defer database.Close()
 
+	// The binary owns its schema: initdb only fires on an empty volume, so a
+	// redeploy against an existing database would never see new migrations.
+	if err := db.Migrate(database, migrations.FS); err != nil {
+		log.Fatal(err)
+	}
+
 	if err := bootstrap(database, cfg); err != nil {
 		log.Fatal(err)
 	}
 
 	gw := gateway.New(database, cfg)
 	bridge := startBridge(database, cfg, gw)
-	defer bridge.Close()
-
 	handler := api.NewHandler(gw, database, cfg, bridge)
 
-	log.Printf("starting coderouter on :%s", cfg.Port)
-	log.Fatal(http.ListenAndServe(":"+cfg.Port, handler))
+	srv := &http.Server{
+		Addr:              ":" + cfg.Port,
+		Handler:           handler,
+		ReadHeaderTimeout: 15 * time.Second,
+	}
+
+	go func() {
+		log.Printf("starting coderouter on :%s", cfg.Port)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	}()
+
+	// Platforms like Dokploy stop containers with SIGTERM during a rolling
+	// deploy; draining lets in-flight completions and streams finish.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
+
+	log.Print("shutdown signal received, draining connections")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("graceful shutdown timed out: %v", err)
+	}
+	bridge.Close()
+	log.Print("stopped")
 }
 
 // bootstrap seeds provider keys from the environment and mints a first client

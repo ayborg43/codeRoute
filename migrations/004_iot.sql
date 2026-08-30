@@ -1,11 +1,11 @@
 -- Devices that talk to the gateway over MQTT or the IoT HTTP endpoints.
-CREATE TABLE devices (
+CREATE TABLE IF NOT EXISTS devices (
     device_id VARCHAR(128) PRIMARY KEY,
     first_seen TIMESTAMPTZ DEFAULT NOW(),
     last_seen TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE telemetry (
+CREATE TABLE IF NOT EXISTS telemetry (
     id BIGSERIAL PRIMARY KEY,
     device_id VARCHAR(128) NOT NULL REFERENCES devices(device_id) ON DELETE CASCADE,
     type VARCHAR(64) NOT NULL,
@@ -14,5 +14,5 @@ CREATE TABLE telemetry (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_telemetry_device ON telemetry(device_id, recorded_at DESC);
-CREATE INDEX idx_telemetry_created ON telemetry(created_at);
+CREATE INDEX IF NOT EXISTS idx_telemetry_device ON telemetry(device_id, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_telemetry_created ON telemetry(created_at);

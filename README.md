@@ -36,4 +36,9 @@ your editor and point the base URL at `http://localhost:8080/v1`.
 | `MQTT_BROKER` | — | Enables the MQTT bridge |
 | `IOT_EDGE_ENDPOINT` | — | OpenAI-compatible local model server, tried before the cloud |
 
+## Deploying
+
+See [DEPLOY.md](DEPLOY.md) for Dokploy deployment. Migrations run automatically
+on startup; any Postgres 13+ works, with `pgvector` optional.
+
 See `sould.md` for the intended feature set and what is still outstanding.

@@ -2,7 +2,7 @@
 -- to CodeRouter, and the upstream provider keys CodeRouter sends onward.
 -- They have different lifecycles, so they get different tables.
 
-CREATE TABLE provider_keys (
+CREATE TABLE IF NOT EXISTS provider_keys (
     provider VARCHAR(50) PRIMARY KEY,
     encrypted_key BYTEA NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
