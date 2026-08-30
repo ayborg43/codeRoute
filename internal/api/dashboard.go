@@ -31,6 +31,7 @@ func (h *Handler) registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/route", h.dashboardRoute)
 	mux.HandleFunc("GET /api/new-models", h.dashboardNewModels)
 	mux.HandleFunc("GET /api/scores", h.dashboardScores)
+	h.registerPlaygroundRoutes(mux)
 	mux.HandleFunc("GET /api/settings", h.dashboardGetSettings)
 	mux.HandleFunc("PUT /api/settings", h.dashboardPutSettings)
 }

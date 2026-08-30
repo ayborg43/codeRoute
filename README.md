@@ -62,6 +62,7 @@ A revoked key gets `401`. Nothing else is enforced against a caller.
 | `POST /api/password` | Change your own password |
 | `GET /api/new-models` | Models that have appeared since the window began |
 | `GET` / `PUT /api/settings` | Read or change the free-only switch at runtime |
+| `POST /api/playground` | Send a prompt through the gateway and see what answered |
 | `GET /api/models` | Per-model traffic, paired with the routing catalogue |
 
 ### Public
@@ -276,6 +277,20 @@ capability is set aside for an hour, so later requests skip straight past it.
 answer is committed — switching providers would splice two different
 completions together — so a stream that dies mid-flight surfaces as an error
 rather than being silently rescued.
+
+## The playground
+
+The dashboard has a **Playground** card: pick a model or a routing alias, type
+a prompt, and see which model actually answered, what it cost, how long it took
+and whether the reply came from cache.
+
+It is the quickest way to see routing work — asking `auto:code` and watching a
+different model answer than `auto:chat` tells you more than any amount of
+configuration reading. Where a request fails it shows the gateway's own
+explanation, naming every provider tried and why each declined.
+
+Runs are attributed to no client key, so experimenting does not distort
+anyone's usage figures, and replies are capped at 2048 tokens.
 
 ## Routing aliases
 

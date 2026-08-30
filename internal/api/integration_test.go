@@ -726,3 +726,149 @@ func publicTables(database *sql.DB) ([]string, error) {
 	}
 	return tables, rows.Err()
 }
+
+func TestPlaygroundRequiresAuthorization(t *testing.T) {
+	h, _, _ := liveHandler(t)
+
+	if rec := do(t, h, http.MethodPost, "/api/playground", "", `{"prompt":"hi"}`); rec.Code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated = %d, want 401", rec.Code)
+	}
+}
+
+func TestPlaygroundValidatesInput(t *testing.T) {
+	h, _, _ := liveHandler(t)
+
+	for name, body := range map[string]string{
+		"no prompt":    `{"model":"auto"}`,
+		"blank prompt": `{"model":"auto","prompt":"   "}`,
+		"malformed":    `not json`,
+	} {
+		if rec := do(t, h, http.MethodPost, "/api/playground", testAdminToken, body); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s = %d, want 400", name, rec.Code)
+		}
+	}
+}
+
+// With no providers configured the playground must report the gateway's own
+// explanation, which names what it tried — that is the whole point of a
+// playground when something is not working.
+func TestPlaygroundSurfacesRoutingFailures(t *testing.T) {
+	h, _, _ := liveHandler(t)
+
+	rec := do(t, h, http.MethodPost, "/api/playground", testAdminToken,
+		`{"model":"auto","prompt":"hello"}`)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("= %d, want 502: %s", rec.Code, rec.Body.String())
+	}
+	if msg := errorMessage(t, rec); !strings.Contains(msg, "provider") {
+		t.Errorf("message does not explain the routing failure: %q", msg)
+	}
+}
+
+// A playground run answers through a real upstream and reports which model
+// served it, what it cost and how long it took.
+func TestPlaygroundReportsWhatAnswered(t *testing.T) {
+	upstream := newPlaygroundUpstream(t)
+
+	h, database, cfg := liveHandlerWith(t, func(c *config.Config) {
+		c.ProviderBaseURLs["openai"] = upstream.URL + "/v1"
+		c.RoutingMode = "off"
+	})
+	if err := db.StoreProviderKey(database, cfg.EncryptionKey, "openai", "sk-test"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := do(t, h, http.MethodPost, "/api/playground", testAdminToken,
+		`{"model":"gpt-4o-mini","prompt":"say hello","max_tokens":64}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("= %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result struct {
+		Requested string   `json:"requested"`
+		Answered  string   `json:"answered"`
+		Provider  string   `json:"provider"`
+		Content   string   `json:"content"`
+		LatencyMs int64    `json:"latency_ms"`
+		TokensIn  int      `json:"tokens_in"`
+		TokensOut int      `json:"tokens_out"`
+		CostUSD   *float64 `json:"cost_usd"`
+	}
+	decode(t, rec, &result)
+
+	if result.Content != "hello from the upstream" {
+		t.Errorf("content = %q", result.Content)
+	}
+	if result.Answered != "gpt-4o-mini" || result.Provider != "openai" {
+		t.Errorf("answered by %q via %q", result.Answered, result.Provider)
+	}
+	if result.TokensIn != 11 || result.TokensOut != 5 {
+		t.Errorf("tokens = %d/%d, want 11/5", result.TokensIn, result.TokensOut)
+	}
+	// gpt-4o-mini is priced in the built-in catalogue, so a cost is reported.
+	if result.CostUSD == nil {
+		t.Error("no cost reported for a model with a published price")
+	}
+	if result.LatencyMs < 0 {
+		t.Errorf("latency = %dms", result.LatencyMs)
+	}
+}
+
+// Playground traffic is attributed to no client key, so it cannot distort a
+// real key's usage figures.
+func TestPlaygroundIsNotBilledToAnyKey(t *testing.T) {
+	upstream := newPlaygroundUpstream(t)
+
+	h, database, cfg := liveHandlerWith(t, func(c *config.Config) {
+		c.ProviderBaseURLs["openai"] = upstream.URL + "/v1"
+		c.RoutingMode = "off"
+	})
+	if err := db.StoreProviderKey(database, cfg.EncryptionKey, "openai", "sk-test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.CreateClientKey(database, "someone"); err != nil {
+		t.Fatal(err)
+	}
+
+	if rec := do(t, h, http.MethodPost, "/api/playground", testAdminToken,
+		`{"model":"gpt-4o-mini","prompt":"hi"}`); rec.Code != http.StatusOK {
+		t.Fatalf("= %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var attributed int
+	if err := database.QueryRow(
+		`SELECT COUNT(*) FROM usage_logs WHERE api_key_id IS NOT NULL`).Scan(&attributed); err != nil {
+		t.Fatal(err)
+	}
+	if attributed != 0 {
+		t.Errorf("%d playground call(s) were billed to a client key", attributed)
+	}
+
+	// It is still recorded, so the spend is visible on the dashboard.
+	var total int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM usage_logs`).Scan(&total); err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Errorf("%d usage rows, want the playground call recorded", total)
+	}
+}
+
+// newPlaygroundUpstream answers a completion with a known body.
+func newPlaygroundUpstream(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"x","object":"chat.completion","model":"gpt-4o-mini",
+			"choices":[{"index":0,"finish_reason":"stop",
+			"message":{"role":"assistant","content":"hello from the upstream"}}],
+			"usage":{"prompt_tokens":11,"completion_tokens":5,"total_tokens":16}}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
