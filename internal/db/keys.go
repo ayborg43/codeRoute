@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -23,12 +24,35 @@ var ErrInvalidKey = errors.New("invalid API key")
 
 const clientKeyPrefix = "cr_"
 
-// ClientKey is a caller-facing CodeRouter key, as sent by an editor.
+// ErrKeyDisabled marks a revoked key, so callers can say why it failed.
+var ErrKeyDisabled = errors.New("API key has been revoked")
+
+// ClientKey is a caller-facing CodeRouter key, as sent by an editor. It is a
+// credential and nothing more: it carries no allowance, and the only thing
+// that can be done to it is revocation.
 type ClientKey struct {
-	ID         string
-	Name       string
-	CreatedAt  string
-	LastUsedAt sql.NullTime
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// Nullable timestamps are pointers rather than sql.NullTime so they
+	// marshal as a timestamp or null. sql.NullTime encodes as
+	// {"Time":...,"Valid":false}, which is a truthy object in every consumer
+	// that checks the field for presence.
+	LastUsedAt *time.Time `json:"last_used_at"`
+	DisabledAt *time.Time `json:"disabled_at"`
+}
+
+// Disabled reports whether the key has been revoked.
+func (k *ClientKey) Disabled() bool { return k.DisabledAt != nil }
+
+// timePtr converts a scanned nullable timestamp to a pointer.
+func timePtr(t sql.NullTime) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	v := t.Time
+	return &v
 }
 
 // CreateClientKey mints a client key, storing only its hash. The raw key is
@@ -38,8 +62,8 @@ func CreateClientKey(database *sql.DB, name string) (string, error) {
 	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
 		return "", err
 	}
-	rawKey := clientKeyPrefix + base64.RawURLEncoding.EncodeToString(buf)
 
+	rawKey := clientKeyPrefix + base64.RawURLEncoding.EncodeToString(buf)
 	hash := sha256.Sum256([]byte(rawKey))
 	id := uuid.New().String()
 
@@ -54,7 +78,7 @@ func CreateClientKey(database *sql.DB, name string) (string, error) {
 	return rawKey, nil
 }
 
-// ValidateClientKey resolves an Authorization header value to a stored key.
+// ValidateClientKey resolves an Authorization header to a stored key.
 func ValidateClientKey(database *sql.DB, header string) (*ClientKey, error) {
 	provided := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
 	if provided == "" {
@@ -65,11 +89,13 @@ func ValidateClientKey(database *sql.DB, header string) (*ClientKey, error) {
 
 	var key ClientKey
 	var name sql.NullString
+	var lastUsed, disabled sql.NullTime
 	var storedHash []byte
 	err := database.QueryRow(
-		`SELECT id, name, created_at, last_used_at, key_hash FROM api_keys WHERE key_hash = $1`,
+		`SELECT id, name, created_at, last_used_at, disabled_at, key_hash
+		 FROM api_keys WHERE key_hash = $1`,
 		hash[:],
-	).Scan(&key.ID, &name, &key.CreatedAt, &key.LastUsedAt, &storedHash)
+	).Scan(&key.ID, &name, &key.CreatedAt, &lastUsed, &disabled, &storedHash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrInvalidKey
@@ -79,11 +105,56 @@ func ValidateClientKey(database *sql.DB, header string) (*ClientKey, error) {
 	if subtle.ConstantTimeCompare(storedHash, hash[:]) != 1 {
 		return nil, ErrInvalidKey
 	}
+	if disabled.Valid {
+		return nil, ErrKeyDisabled
+	}
+	key.LastUsedAt, key.DisabledAt = timePtr(lastUsed), timePtr(disabled)
 	key.Name = name.String
 
 	_, _ = database.Exec(`UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`, key.ID)
 
 	return &key, nil
+}
+
+// RevokeClientKey disables a key without deleting it, so its usage history
+// stays intact. This is the only way to cut a caller off.
+func RevokeClientKey(database *sql.DB, keyID string) error {
+	res, err := database.Exec(
+		`UPDATE api_keys SET disabled_at = NOW() WHERE id = $1 AND disabled_at IS NULL`,
+		keyID,
+	)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("no active key with that id")
+	}
+	return nil
+}
+
+// ListClientKeys returns every client key. Hashes are never returned.
+func ListClientKeys(database *sql.DB) ([]ClientKey, error) {
+	rows, err := database.Query(
+		`SELECT id, name, created_at, last_used_at, disabled_at
+		 FROM api_keys ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	keys := []ClientKey{}
+	for rows.Next() {
+		var k ClientKey
+		var name sql.NullString
+		var lastUsed, disabled sql.NullTime
+		if err := rows.Scan(&k.ID, &name, &k.CreatedAt, &lastUsed, &disabled); err != nil {
+			return nil, err
+		}
+		k.Name = name.String
+		k.LastUsedAt, k.DisabledAt = timePtr(lastUsed), timePtr(disabled)
+		keys = append(keys, k)
+	}
+	return keys, rows.Err()
 }
 
 // CountClientKeys reports how many client keys exist, for startup bootstrap.
@@ -183,3 +254,80 @@ func decrypt(ciphertext, key []byte) ([]byte, error) {
 	nonce, data := data[:nonceSize], data[nonceSize:]
 	return gcm.Open(nil, nonce, data, nil)
 }
+
+// ProviderKeyInfo describes a stored upstream key without revealing it. The
+// fingerprint is enough to tell two keys apart, or to confirm which one is
+// deployed, and reverses to nothing.
+type ProviderKeyInfo struct {
+	Provider    string    `json:"provider"`
+	Fingerprint string    `json:"fingerprint"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// ListProviderKeys reports which upstream keys are stored. It decrypts each one
+// only to fingerprint it; the plaintext never leaves this function.
+func ListProviderKeys(database *sql.DB, encryptionKey []byte) ([]ProviderKeyInfo, error) {
+	rows, err := database.Query(
+		`SELECT provider, encrypted_key, created_at, updated_at FROM provider_keys ORDER BY provider`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []ProviderKeyInfo{}
+	for rows.Next() {
+		var info ProviderKeyInfo
+		var encrypted []byte
+		if err := rows.Scan(&info.Provider, &encrypted, &info.CreatedAt, &info.UpdatedAt); err != nil {
+			return nil, err
+		}
+
+		decrypted, err := decrypt(encrypted, encryptionKey)
+		if err != nil {
+			// A key that will not decrypt is worth surfacing rather than
+			// hiding: it means ENCRYPTION_KEY changed, and every request
+			// through that provider is already failing.
+			info.Fingerprint = "undecryptable"
+		} else {
+			info.Fingerprint = FingerprintKey(string(decrypted))
+		}
+
+		out = append(out, info)
+	}
+	return out, rows.Err()
+}
+
+// DeleteProviderKey removes an upstream key. Reports whether one was there.
+func DeleteProviderKey(database *sql.DB, provider string) (bool, error) {
+	res, err := database.Exec(`DELETE FROM provider_keys WHERE provider = $1`, provider)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// ProviderKey returns one decrypted upstream key, or ErrNoProviderKey when
+// none is stored. It is the read path for anything that needs a single key
+// rather than the whole set.
+func ProviderKey(database *sql.DB, encryptionKey []byte, provider string) (string, error) {
+	var encrypted []byte
+	err := database.QueryRow(
+		`SELECT encrypted_key FROM provider_keys WHERE provider = $1`, provider).Scan(&encrypted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNoProviderKey
+	}
+	if err != nil {
+		return "", err
+	}
+
+	decrypted, err := decrypt(encrypted, encryptionKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt key for %s: %w", provider, err)
+	}
+	return string(decrypted), nil
+}
+
+// ErrNoProviderKey means no upstream key is stored for that provider.
+var ErrNoProviderKey = errors.New("no provider key stored")

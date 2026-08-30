@@ -13,9 +13,18 @@ import (
 
 type Google struct {
 	BaseURL string
+
+	// ProviderName is the registry name this client answers to. Several
+	// providers share a dialect, so the name cannot be derived from the type.
+	ProviderName string
 }
 
-func (g *Google) Name() string { return "google" }
+func (g *Google) Name() string {
+	if g.ProviderName != "" {
+		return g.ProviderName
+	}
+	return "google"
+}
 
 type googlePart struct {
 	Text string `json:"text"`

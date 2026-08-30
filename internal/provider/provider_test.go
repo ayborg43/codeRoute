@@ -76,21 +76,6 @@ func TestSystemAndTurnsMergesConsecutiveRoles(t *testing.T) {
 	}
 }
 
-func TestProviderFor(t *testing.T) {
-	cases := map[string]string{
-		"gpt-4o-mini":                "openai",
-		"o3-mini":                    "openai",
-		"claude-3-5-sonnet-20241022": "anthropic",
-		"gemini-1.5-flash":           "google",
-		"llama-3":                    "",
-	}
-	for model, want := range cases {
-		if got := ProviderFor(model); got != want {
-			t.Errorf("ProviderFor(%q) = %q, want %q", model, got, want)
-		}
-	}
-}
-
 func TestOpenAIPreservesUnmodeledFields(t *testing.T) {
 	raw := `{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function"}],"response_format":{"type":"json_object"}}`
 	req := &ChatRequest{Model: "gpt-4o", Raw: json.RawMessage(raw)}

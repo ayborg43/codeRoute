@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 
 	"github.com/coderouter/coderouter/internal/config"
@@ -14,41 +15,75 @@ import (
 	"github.com/coderouter/coderouter/internal/gateway"
 	"github.com/coderouter/coderouter/internal/iot"
 	"github.com/coderouter/coderouter/internal/provider"
-	"github.com/coderouter/coderouter/internal/routing"
 )
 
 // maxRequestBytes caps an inbound body; large contexts are still well under it.
 const maxRequestBytes = 32 << 20
+
+// freeRouterModel is the model name a caller asks for to stay on free models.
+const freeRouterModel = "auto:free"
+
+// modelEntry is one row of /v1/models. Prices are pointers so an unpriced
+// model omits them entirely rather than reporting a misleading zero.
+type modelEntry struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	OwnedBy string `json:"owned_by"`
+
+	InputCostPer1M  *float64 `json:"input_cost_per_1m,omitempty"`
+	OutputCostPer1M *float64 `json:"output_cost_per_1m,omitempty"`
+	Free            *bool    `json:"free,omitempty"`
+}
 
 type Handler struct {
 	gw     *gateway.Gateway
 	db     *sql.DB
 	cfg    *config.Config
 	bridge *iot.Bridge
+
+	// throttle bars an identity after repeated failed sign-ins. It is held on
+	// the handler rather than being global so tests get a fresh one.
+	throttle *loginThrottle
 }
 
 func NewHandler(gw *gateway.Gateway, database *sql.DB, cfg *config.Config, bridge *iot.Bridge) http.Handler {
-	h := &Handler{gw: gw, db: database, cfg: cfg, bridge: bridge}
+	h := &Handler{gw: gw, db: database, cfg: cfg, bridge: bridge, throttle: newLoginThrottle()}
 	mux := http.NewServeMux()
+
+	h.registerAuthRoutes(mux)
+	h.registerAdminRoutes(mux)
+	h.registerDashboardRoutes(mux)
 
 	mux.HandleFunc("/v1/chat/completions", h.handleChatCompletions)
 	mux.HandleFunc("/v1/models", h.handleModels)
 	mux.HandleFunc("/v1/iot/telemetry", h.handleTelemetry)
 	mux.HandleFunc("/v1/iot/inference", h.handleIoTInference)
 	mux.HandleFunc("/health", h.handleHealth)
-	mux.HandleFunc("/", h.handleDashboard)
+	mux.HandleFunc("/", h.serveDashboard)
 
 	return mux
 }
 
-// authenticate resolves the caller's client key, returning its ID for usage
-// attribution.
-func (h *Handler) authenticate(r *http.Request) (string, error) {
+// authorize resolves the caller's client key. It writes the error response
+// itself and reports whether the request may proceed.
+//
+// A valid key is now unconditional permission: there is no rate limit, no
+// daily budget, and no suspension. Revocation is the only control left.
+func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) (*db.ClientKey, bool) {
 	key, err := db.ValidateClientKey(h.db, r.Header.Get("Authorization"))
 	if err != nil {
-		return "", err
+		switch {
+		case errors.Is(err, db.ErrKeyDisabled):
+			writeError(w, http.StatusUnauthorized, "this API key has been revoked", "invalid_request_error")
+		case errors.Is(err, db.ErrInvalidKey):
+			writeError(w, http.StatusUnauthorized, "invalid API key", "invalid_request_error")
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to verify API key", "internal_error")
+		}
+		return nil, false
 	}
-	return key.ID, nil
+
+	return key, true
 }
 
 func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -57,13 +92,8 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	keyID, err := h.authenticate(r)
-	if err != nil {
-		if errors.Is(err, db.ErrInvalidKey) {
-			writeError(w, http.StatusUnauthorized, "invalid API key", "invalid_request_error")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to verify API key", "internal_error")
+	key, ok := h.authorize(w, r)
+	if !ok {
 		return
 	}
 
@@ -90,11 +120,11 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if req.Stream {
-		h.streamCompletions(w, r, &req, keyID)
+		h.streamCompletions(w, r, &req, key)
 		return
 	}
 
-	resp, err := h.gw.Complete(r.Context(), &req, keyID)
+	resp, err := h.gw.Complete(r.Context(), &req, key)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error(), "upstream_error")
 		return
@@ -103,7 +133,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *Handler) streamCompletions(w http.ResponseWriter, r *http.Request, req *provider.ChatRequest, keyID string) {
+func (h *Handler) streamCompletions(w http.ResponseWriter, r *http.Request, req *provider.ChatRequest, key *db.ClientKey) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "streaming unsupported by server", "internal_error")
@@ -133,7 +163,7 @@ func (h *Handler) streamCompletions(w http.ResponseWriter, r *http.Request, req 
 		return nil
 	}
 
-	err := h.gw.Stream(r.Context(), req, keyID, emit)
+	err := h.gw.Stream(r.Context(), req, key, emit)
 	if err != nil {
 		// Nothing was written yet, so a normal HTTP error is still possible.
 		if !started {
@@ -158,8 +188,7 @@ func (h *Handler) streamCompletions(w http.ResponseWriter, r *http.Request, req 
 }
 
 func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
-	if _, err := h.authenticate(r); err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid API key", "invalid_request_error")
+	if _, ok := h.authorize(w, r); !ok {
 		return
 	}
 
@@ -169,26 +198,58 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := []map[string]any{}
-	for _, p := range routing.Profiles() {
-		if !configured[p.Provider] {
-			continue
-		}
-		data = append(data, map[string]any{
-			"id":       p.Model,
-			"object":   "model",
-			"owned_by": p.Provider,
-		})
+	catalog := h.gw.Catalog()
+	freeOnly := r.URL.Query().Get("free") == "true" || h.gw.FreeOnly()
+
+	// Discovered models are what a provider actually serves today; the curated
+	// catalogue is the hand-tuned subset smart routing chooses between. Both
+	// are advertised, deduplicated, so an editor's model list matches what the
+	// gateway will accept.
+	pool := catalog.Discovered()
+	if freeOnly {
+		pool = catalog.FreeModels()
+	} else {
+		pool = append(pool, catalog.Profiles()...)
 	}
 
-	// Advertise the router itself so editors can pick smart routing from
-	// their model dropdown.
+	seen := make(map[string]bool)
+	data := []modelEntry{}
+	for _, p := range pool {
+		if !configured[p.Provider] || seen[p.Model] {
+			continue
+		}
+		seen[p.Model] = true
+
+		entry := modelEntry{ID: p.Model, Object: "model", OwnedBy: p.Provider}
+		if p.PriceKnown {
+			in, out, free := p.InputCostPer1M, p.OutputCostPer1M, p.Free()
+			entry.InputCostPer1M, entry.OutputCostPer1M, entry.Free = &in, &out, &free
+		}
+		data = append(data, entry)
+	}
+
+	sort.Slice(data, func(i, j int) bool { return data[i].ID < data[j].ID })
+
+	// Advertise the routing aliases so an editor can pick one from its model
+	// dropdown without knowing any provider's model names.
 	if h.cfg.RoutingMode != "off" && len(data) > 0 {
-		data = append([]map[string]any{{
-			"id":       h.cfg.RouterModel,
-			"object":   "model",
-			"owned_by": "coderouter",
-		}}, data...)
+		hasFree := len(catalog.FreeModels()) > 0
+
+		var head []modelEntry
+		for _, name := range gateway.Sentinels() {
+			if name == freeRouterModel {
+				if !hasFree {
+					continue
+				}
+				yes := true
+				head = append(head, modelEntry{
+					ID: name, Object: "model", OwnedBy: "coderouter", Free: &yes,
+				})
+				continue
+			}
+			head = append(head, modelEntry{ID: name, Object: "model", OwnedBy: "coderouter"})
+		}
+		data = append(head, data...)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
@@ -197,8 +258,7 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 // handleTelemetry ingests a device reading (POST) or reads a device's recent
 // history (GET ?device_id=...&limit=).
 func (h *Handler) handleTelemetry(w http.ResponseWriter, r *http.Request) {
-	if _, err := h.authenticate(r); err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid API key", "invalid_request_error")
+	if _, ok := h.authorize(w, r); !ok {
 		return
 	}
 
@@ -247,9 +307,8 @@ func (h *Handler) handleIoTInference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	keyID, err := h.authenticate(r)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid API key", "invalid_request_error")
+	key, ok := h.authorize(w, r)
+	if !ok {
 		return
 	}
 
@@ -259,7 +318,7 @@ func (h *Handler) handleIoTInference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.bridge.InferAs(r.Context(), req, keyID)
+	resp, err := h.bridge.InferAs(r.Context(), req, key)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error(), "upstream_error")
 		return
@@ -282,13 +341,9 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 		body["providers"] = configured
 	}
 	body["mqtt"] = h.bridge.Connected()
+	body["cache"] = h.gw.CacheStats().Enabled
 
 	writeJSON(w, code, body)
-}
-
-func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(`<!DOCTYPE html><html><head><title>CodeRouter</title></head><body><h1>CodeRouter Dashboard</h1><p>Coming soon</p></body></html>`))
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

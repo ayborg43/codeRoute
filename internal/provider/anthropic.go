@@ -19,9 +19,18 @@ const (
 
 type Anthropic struct {
 	BaseURL string
+
+	// ProviderName is the registry name this client answers to. Several
+	// providers share a dialect, so the name cannot be derived from the type.
+	ProviderName string
 }
 
-func (a *Anthropic) Name() string { return "anthropic" }
+func (a *Anthropic) Name() string {
+	if a.ProviderName != "" {
+		return a.ProviderName
+	}
+	return "anthropic"
+}
 
 type anthropicMessage struct {
 	Role    string `json:"role"`

@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      # pgvector so the semantic cache tests exercise the real query rather
+      # than skipping; the migrations degrade gracefully without it, and that
+      # path is covered by the unit tests.
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        env:
+          TEST_DATABASE_URL: postgres://test:test@localhost:5432/test?sslmode=disable
+        run: go test -race -count=1 ./...
+
+      # The database-backed tests must not quietly stop running because the
+      # service failed to come up and every one of them skipped.
+      - name: Confirm the integration tests ran
+        env:
+          TEST_DATABASE_URL: postgres://test:test@localhost:5432/test?sslmode=disable
+        run: |
+          go test -count=1 -run 'Integration|Cache|Threshold|Dashboard|Admin|ClientKey|Provider' -v ./internal/db/ ./internal/api/ ./internal/cache/ > out.txt 2>&1 || { cat out.txt; exit 1; }
+          if grep -q 'TEST_DATABASE_URL is not set' out.txt; then
+            echo "Integration tests skipped; the postgres service did not come up."
+            exit 1
+          fi
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The deployment is the product here, so a broken image is a broken build.
+      - name: Build the image
+        run: docker build -t coderouter:ci .

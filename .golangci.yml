@@ -1,0 +1,45 @@
+version: "2"
+
+linters:
+  enable:
+    - bodyclose      # a leaked response body holds a connection open
+    - errcheck
+    - govet
+    - ineffassign
+    - misspell
+    - rowserrcheck   # a swallowed rows.Err() silently truncates a result set
+    - sqlclosecheck
+    - staticcheck
+    - unconvert
+    - unused
+
+  settings:
+    errcheck:
+      # A deferred Close or Rollback has nowhere to report to, and its error
+      # is not actionable; checking them is noise, not safety. Errors from the
+      # calls that matter — Query, Exec, Commit — are all checked.
+      check-type-assertions: true
+      exclude-functions:
+        - (io.Closer).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Tx).Rollback
+        - (*database/sql.Stmt).Close
+        - (io.ReadCloser).Close
+        # Deliberate best-effort writes: a response already committed to the
+        # wire cannot be un-sent, and a failed usage log must never fail a
+        # request that already succeeded.
+        - (net/http.ResponseWriter).Write
+        - fmt.Fprint
+        - fmt.Fprintf
+
+  exclusions:
+    rules:
+      # Test helpers assert on the outcome, not on every setup call.
+      - path: _test\.go
+        linters:
+          - errcheck
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

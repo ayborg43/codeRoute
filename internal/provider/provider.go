@@ -3,11 +3,17 @@ package provider
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 )
+
+// ErrNoKey means no upstream key is stored for a provider yet. It is a normal
+// state on a fresh deployment, not a failure, so callers can distinguish it
+// from a key that exists and does not work.
+var ErrNoKey = errors.New("no API key configured")
 
 // Client translates between the OpenAI-compatible surface CodeRouter exposes
 // and one upstream provider's own wire format.
@@ -27,36 +33,6 @@ type Client interface {
 
 // Registry holds one Client per provider name.
 type Registry map[string]Client
-
-func NewRegistry(overrides map[string]string) Registry {
-	pick := func(name, fallback string) string {
-		if v := overrides[name]; v != "" {
-			return strings.TrimRight(v, "/")
-		}
-		return fallback
-	}
-
-	return Registry{
-		"openai":    &OpenAI{BaseURL: pick("openai", "https://api.openai.com/v1")},
-		"anthropic": &Anthropic{BaseURL: pick("anthropic", "https://api.anthropic.com/v1")},
-		"google":    &Google{BaseURL: pick("google", "https://generativelanguage.googleapis.com/v1beta")},
-	}
-}
-
-// ProviderFor maps a model name to the provider that serves it.
-func ProviderFor(model string) string {
-	m := strings.ToLower(model)
-	switch {
-	case strings.HasPrefix(m, "gpt-"), strings.HasPrefix(m, "chatgpt"),
-		strings.HasPrefix(m, "o1"), strings.HasPrefix(m, "o3"), strings.HasPrefix(m, "o4"):
-		return "openai"
-	case strings.HasPrefix(m, "claude"):
-		return "anthropic"
-	case strings.HasPrefix(m, "gemini"):
-		return "google"
-	}
-	return ""
-}
 
 // scanSSE walks an SSE body and calls fn with each `data:` payload, stopping
 // at [DONE]. Providers differ in event framing but all use this envelope.

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/coderouter/coderouter/internal/db"
 	"github.com/coderouter/coderouter/internal/provider"
 )
 
@@ -35,7 +36,7 @@ type fakeRouter struct {
 	err    error
 }
 
-func (f *fakeRouter) Complete(_ context.Context, req *provider.ChatRequest, _ string) (*provider.ChatResponse, error) {
+func (f *fakeRouter) Complete(_ context.Context, req *provider.ChatRequest, _ *db.ClientKey) (*provider.ChatResponse, error) {
 	f.called = true
 	if f.err != nil {
 		return nil, f.err

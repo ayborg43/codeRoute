@@ -13,9 +13,18 @@ import (
 // so the client's original body is forwarded with only stream flags adjusted.
 type OpenAI struct {
 	BaseURL string
+
+	// ProviderName is the registry name this client answers to. Several
+	// providers share a dialect, so the name cannot be derived from the type.
+	ProviderName string
 }
 
-func (o *OpenAI) Name() string { return "openai" }
+func (o *OpenAI) Name() string {
+	if o.ProviderName != "" {
+		return o.ProviderName
+	}
+	return "openai"
+}
 
 func (o *OpenAI) BuildRequest(ctx context.Context, req *ChatRequest, apiKey string, stream bool) (*http.Request, error) {
 	body, err := o.renderBody(req, stream)

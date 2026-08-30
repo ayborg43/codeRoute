@@ -3,57 +3,949 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light">
+<meta name="description" content="Operator dashboard for the CodeRouter gateway — traffic, spend, provider keys and client keys.">
 <title>CodeRouter Dashboard</title>
 <style>
+:root{
+  --bg:#f5f7fa;--surface:#fff;--surface-2:#f8fafc;
+  --border:#e6eaf0;--border-strong:#cbd5e1;--hover-border:#b8c4d6;
+  --text:#0f172a;--text-2:#334155;--muted:#64748b;--faint:#94a3b8;
+  --accent:#2563eb;--accent-hover:#1d4ed8;--accent-soft:#eff6ff;--accent-border:#dbeafe;
+  --ok:#16a34a;--ok-deep:#166534;--ok-soft:#f0fdf4;--ok-border:#bbf7d0;
+  --warn:#b45309;--warn-text:#92400e;--warn-soft:#fffbeb;--warn-border:#fde68a;
+  --err:#dc2626;--err-deep:#b91c1c;--err-soft:#fef2f2;--err-border:#fecaca;
+  --shadow-sm:0 1px 2px rgba(15,23,42,.05);
+  --shadow-md:0 1px 2px rgba(15,23,42,.05),0 12px 32px -16px rgba(15,23,42,.18);
+  --radius:12px;--radius-sm:8px;
+  color-scheme:light;
+}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh}
-.nav{background:#1e293b;padding:1rem 2rem;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #334155}
-.nav h1{font-size:1.25rem;font-weight:600;color:#f8fafc}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:var(--bg);background-image:radial-gradient(1100px 420px at 50% -200px,rgba(37,99,235,.07),transparent 70%);background-repeat:no-repeat;color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased}
+::selection{background:rgba(37,99,235,.16)}
+.nav{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.82);-webkit-backdrop-filter:blur(12px) saturate(1.5);backdrop-filter:blur(12px) saturate(1.5);padding:.9rem 2rem;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);gap:1rem;flex-wrap:wrap}
+.nav h1{font-size:1.0625rem;font-weight:700;letter-spacing:-.01em;color:var(--text);display:flex;align-items:center;gap:.55rem}
+.mark{display:inline-flex;align-items:center;justify-content:center;flex:none;width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 1px 2px rgba(29,78,216,.35)}
+.mark svg{width:14px;height:14px}
+.nav-right{display:flex;align-items:center;gap:.75rem;font-size:.875rem}
 .container{max-width:1200px;margin:2rem auto;padding:0 2rem}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1.5rem;margin-bottom:2rem}
-.card{background:#1e293b;border-radius:0.5rem;padding:1.5rem;border:1px solid #334155}
-.card h2{font-size:0.875rem;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;margin-bottom:1rem}
-.stat{font-size:2rem;font-weight:700;color:#f8fafc}
-.stat-label{font-size:0.75rem;color:#64748b;margin-top:0.25rem}
-.btn{background:#3b82f6;color:#fff;border:none;padding:0.75rem 1.5rem;border-radius:0.375rem;cursor:pointer;font-size:0.875rem;font-weight:500;transition:background 0.2s}
-.btn:hover{background:#2563eb}
-.key-display{background:#0f172a;border:1px solid #334155;border-radius:0.375rem;padding:1rem;margin-top:1rem;font-family:monospace;font-size:0.875rem;word-break:break-all;display:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1.25rem;margin-bottom:1.75rem}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;box-shadow:var(--shadow-sm)}
+.card h2{font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:1rem}
+.stat{font-size:2.25rem;font-weight:700;letter-spacing:-.02em;line-height:1.15;color:var(--text);font-variant-numeric:tabular-nums}
+.stat-label{font-size:.75rem;color:var(--muted);margin-top:.4rem}
+.btn{display:inline-flex;align-items:center;justify-content:center;background:var(--accent);border:1px solid var(--accent);color:#fff;padding:.55rem 1.05rem;border-radius:var(--radius-sm);cursor:pointer;font-size:.8125rem;font-weight:600;font-family:inherit;box-shadow:var(--shadow-sm);transition:background .15s ease,border-color .15s ease,color .15s ease,box-shadow .15s ease}
+.btn:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+.btn:active{box-shadow:none}
+.btn.ghost{background:var(--surface);border-color:var(--border-strong);color:var(--text-2);box-shadow:none}
+.btn.ghost:hover{background:var(--surface-2);border-color:var(--hover-border);color:var(--text)}
+.btn.small{padding:.35rem .7rem;font-size:.75rem;border-radius:7px}
+input,select{background:var(--surface);border:1px solid var(--border-strong);color:var(--text);border-radius:var(--radius-sm);padding:.5rem .75rem;font-size:.8125rem;font-family:inherit;transition:border-color .15s ease,box-shadow .15s ease}
+input::placeholder{color:var(--faint)}
+input:hover,select:hover{border-color:var(--hover-border)}
+input:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,.14)}
+select{appearance:none;-webkit-appearance:none;padding-right:2rem;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right .55rem center}
+input[type=checkbox]{appearance:auto;-webkit-appearance:checkbox;width:auto;padding:0;accent-color:var(--accent)}
+.key-display{background:var(--warn-soft);border:1px solid var(--warn-border);border-radius:var(--radius-sm);padding:1rem 1.1rem;margin-top:1rem;font-size:.8125rem;display:none}
 .key-display.visible{display:block}
+.endpoint{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:.85rem 1.25rem;margin-bottom:1.5rem;box-shadow:var(--shadow-sm)}
+.endpoint .label{font-size:.6875rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:600}
+.endpoint code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8125rem;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent-border);border-radius:6px;padding:.35rem .7rem;user-select:all}
+.endpoint .note{font-size:.75rem;color:var(--muted);margin-left:auto}
+.field{display:grid;grid-template-columns:5.5rem 1fr auto;gap:.75rem;align-items:center;margin-bottom:.6rem}
+.field:last-child{margin-bottom:0}
+.field .label{font-size:.6875rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:600}
+.field .value{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:500;word-break:break-all;color:var(--text);user-select:all}
+.warn-note{color:var(--warn);font-size:.75rem;margin-top:.75rem}
 table{width:100%;border-collapse:collapse;margin-top:1rem}
-th,td{text-align:left;padding:0.75rem;border-bottom:1px solid #334155;font-size:0.875rem}
-th{color:#94a3b8;font-weight:500;text-transform:uppercase;letter-spacing:0.05em;font-size:0.75rem}
-.status-ok{color:#22c55e}
-.status-err{color:#ef4444}
+th,td{text-align:left;padding:.6rem .75rem;border-bottom:1px solid var(--border);font-size:.8125rem;white-space:nowrap}
+th{position:sticky;top:0;z-index:1;background:var(--surface);border-bottom:none;box-shadow:inset 0 -1px 0 var(--border);color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;font-size:.6875rem}
+tbody tr:hover td{background:var(--surface-2)}
+tbody tr:last-child td{border-bottom:none}
+.scroll{overflow-x:auto;border-radius:var(--radius-sm)}
+.status-ok{color:var(--ok);font-weight:500}
+.status-err{color:var(--err);font-weight:500}
+.status-warn{color:var(--warn);font-weight:500}
+.muted{color:var(--muted)}
+.pill{display:inline-block;padding:.15rem .55rem;border-radius:999px;font-size:.6875rem;font-weight:500;background:#f1f5f9;border:1px solid var(--border);color:var(--text-2)}
+.pill.hit{background:var(--ok-soft);border-color:var(--ok-border);color:var(--ok-deep)}
+.free-pill{display:inline-block;padding:.1rem .45rem;border-radius:999px;font-size:.6875rem;font-weight:500;background:var(--ok-soft);border:1px solid var(--ok-border);color:var(--ok-deep)}
+.gate{max-width:430px;margin:5rem auto;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:2.5rem 2.25rem;box-shadow:var(--shadow-md)}
+.gate h1{font-size:1.25rem;font-weight:700;letter-spacing:-.01em;color:var(--text);display:flex;align-items:center;justify-content:center;gap:.6rem}
+.gate .mark{width:34px;height:34px;border-radius:9px}
+.gate .mark svg{width:18px;height:18px}
+.gate p{color:var(--muted);font-size:.875rem;margin:1rem 0;line-height:1.6;text-wrap:pretty}
+.gate code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.75rem;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:.1rem .35rem}
+.gate form{display:flex;flex-direction:column;gap:.6rem;margin-top:1.25rem;text-align:left}
+.gate input{width:100%}
+.gate .btn{width:100%;justify-content:center;margin-top:.25rem}
+.gate-error{color:var(--err);font-size:.8125rem;margin-top:.9rem}
+.gate-hint{color:var(--muted);font-size:.75rem;margin-top:.6rem}
+.hidden{display:none}
+.banner{background:var(--warn-soft);border:1px solid var(--warn-border);color:var(--warn-text);padding:.75rem 1rem;border-radius:var(--radius-sm);margin-bottom:1.5rem;font-size:.8125rem}
+.row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.hint{color:var(--muted);font-size:.75rem;margin:-.5rem 0 .75rem;max-width:62ch;line-height:1.55}
+.inline-error{color:var(--err);font-size:.8125rem;margin-top:.75rem;white-space:pre-wrap}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+.btn.danger{background:var(--err-soft);border-color:var(--err-border);color:var(--err-deep);box-shadow:none}
+.btn.danger:hover{background:var(--err);border-color:var(--err);color:#fff}
+.check{display:flex;align-items:center;gap:.45rem;font-size:.8125rem;color:var(--text-2);cursor:pointer}
+.check input{width:auto}
+.btn.on{background:var(--ok-deep);border-color:var(--ok-deep);color:#fff}
+.btn.on:hover{background:#14532d;border-color:#14532d}
+a.console{color:var(--accent);text-decoration:none;font-size:.75rem;font-weight:500}
+a.console:hover{text-decoration:underline}
+.tagbtn{background:#334155;color:#94a3b8;border:none;border-radius:.3rem;padding:.2rem .5rem;font-size:.6875rem;cursor:pointer;margin-right:.25rem}
+.tagbtn:hover{background:#475569;color:#e2e8f0}
+.tagbtn.on{background:#14532d;color:#86efac}
+button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (max-width:640px){
+  .nav{padding:.75rem 1rem}
+  .container{margin:1.25rem auto;padding:0 1rem}
+  .card{padding:1.15rem}
+  .grid{gap:1rem}
+  .field{grid-template-columns:1fr auto}
+  .field .label{grid-column:1/-1}
+  .endpoint .note{margin-left:0;width:100%}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
 </style>
 </head>
 <body>
-<nav class="nav"><h1>CodeRouter</h1><div id="health" class="status-ok">Healthy</div></nav>
+
+<div id="gate" class="gate">
+  <h1>CodeRouter</h1>
+  <p>Sign in to manage providers, keys and routing.</p>
+  <form id="gate-form">
+    <input id="login-email" type="email" placeholder="Email" autocomplete="username" autofocus>
+    <input id="login-password" type="password" placeholder="Password" autocomplete="current-password">
+    <button class="btn" type="submit" id="login-button">Sign in</button>
+  </form>
+  <p id="gate-error" class="gate-error hidden"></p>
+  <p id="gate-hint" class="gate-hint"></p>
+</div>
+
+<div id="app" class="hidden">
+<nav class="nav">
+  <h1><span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg></span>CodeRouter</h1>
+  <div class="nav-right">
+    <select id="window">
+      <option value="1h">Last hour</option>
+      <option value="24h" selected>Last 24 hours</option>
+      <option value="168h">Last 7 days</option>
+      <option value="720h">Last 30 days</option>
+    </select>
+    <span id="health" class="muted">checking…</span>
+    <span id="whoami" class="muted" style="font-size:.75rem"></span>
+    <button class="btn ghost small" id="signout">Sign out</button>
+  </div>
+</nav>
+
 <div class="container">
-<div class="grid">
-<div class="card"><h2>Total Requests</h2><div class="stat" id="total-requests">0</div><div class="stat-label">Last 24 hours</div></div>
-<div class="card"><h2>Avg Latency</h2><div class="stat" id="avg-latency">0ms</div><div class="stat-label">Across all providers</div></div>
-<div class="card"><h2>Cache Hit Rate</h2><div class="stat" id="cache-rate">0%</div><div class="stat-label">Semantic cache</div></div>
-<div class="card"><h2>Active Providers</h2><div class="stat" id="active-providers">3</div><div class="stat-label">OpenAI, Anthropic, Google</div></div>
+  <div id="banner" class="banner hidden"></div>
+
+  <div class="endpoint">
+    <span class="label">Base URL</span>
+    <code id="base-url">&nbsp;</code>
+    <button class="btn ghost small" id="copy-base-url">Copy</button>
+    <span class="note">Point your editor here and use a client key below as the API key.</span>
+  </div>
+
+  <div class="grid">
+    <div class="card"><h2>Requests</h2><div class="stat" id="s-requests">0</div><div class="stat-label" id="s-errors">&nbsp;</div></div>
+    <div class="card"><h2>Avg Latency</h2><div class="stat" id="s-latency">0ms</div><div class="stat-label">Upstream calls only</div></div>
+    <div class="card"><h2>Cache Hit Rate</h2><div class="stat" id="s-cache">0%</div><div class="stat-label" id="s-cache-detail">&nbsp;</div></div>
+    <div class="card"><h2>Spend</h2><div class="stat" id="s-cost">$0.00</div><div class="stat-label" id="s-tokens">&nbsp;</div></div>
+    <div class="card"><h2>Tokens</h2><div class="stat" id="s-tokens-total">0</div><div class="stat-label" id="s-tokens-split">&nbsp;</div></div>
+    <div class="card"><h2>Providers</h2><div class="stat" id="s-providers">0</div><div class="stat-label" id="s-provider-list">&nbsp;</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Provider Keys</h2>
+    <p class="hint">Paste a key to enable a provider. Keys are stored encrypted
+       in Postgres and checked against the provider before they are saved, so a
+       typo is caught here rather than by every completion afterwards. Saving a
+       key also reads that provider&rsquo;s model list.
+       <span class="free-pill">free tier</span> marks providers that offer
+       usable free access. A few publish their model list without
+       authentication &mdash; there a key is stored but cannot be proven, and
+       shows as <span class="status-warn">unverified</span>.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Provider</th><th>Status</th><th>Models</th><th>Fingerprint</th><th></th></tr></thead>
+        <tbody id="providers"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+      </table>
+    </div>
+    <div id="provider-error" class="inline-error hidden"></div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem">
+    <h2>Available Models</h2>
+    <p class="hint">What the configured providers report they serve. A model
+       counts as free only when its provider publishes a zero price &mdash;
+       an unpriced model is never assumed free, which is what keeps
+       <code>auto:free</code> from quietly spending money.<br>
+       <strong>Use for</strong> marks a model for a kind of work. Once any
+       model is marked for a task, <code>auto:code</code> or
+       <code>auto:chat</code> will use <em>only</em> the marked ones &mdash; a
+       mark is an instruction, not a hint. <span id="tag-summary"></span></p>
+    <div class="row" style="margin-bottom:.75rem">
+      <button class="btn" id="free-only-toggle">&hellip;</button>
+      <span id="free-only-state" class="muted" style="font-size:.75rem"></span>
+    </div>
+    <div class="row" style="margin-bottom:.5rem">
+      <label class="check"><input type="checkbox" id="free-only-view"> Free models only</label>
+      <select id="provider-filter"><option value="">All providers</option></select>
+      <input id="model-filter" placeholder="Filter by name" style="width:200px">
+      <button class="btn ghost small" id="rediscover">Refresh from providers</button>
+      <span id="catalogue-summary" class="muted" style="font-size:.75rem"></span>
+    </div>
+    <div class="scroll" style="max-height:22rem;overflow-y:auto">
+      <table>
+        <thead><tr><th>Model</th><th>Provider</th><th>Input $/1M</th><th>Output $/1M</th><th>Use for</th></tr></thead>
+        <tbody id="catalogue"><tr><td colspan="5" class="muted">Loading&hellip;</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem">
+    <h2>Model Scores</h2>
+    <p class="hint">Measured from this deployment&rsquo;s own traffic &mdash; whether
+       calls succeed and how fast they return. <strong>Not a measure of answer
+       quality</strong>, which the gateway never observes. Lower score is better;
+       routing uses it to prefer models that work.</p>
+    <div class="row" style="margin-bottom:.5rem">
+      <select id="score-task">
+        <option value="conversation">Ranked for chat</option>
+        <option value="code_generation">Ranked for coding</option>
+        <option value="analysis">Ranked for analysis</option>
+      </select>
+      <span id="score-note" class="muted" style="font-size:.75rem"></span>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Model</th><th>Provider</th><th>Calls</th><th>Success</th><th>Median</th><th>Suits task</th><th>Score</th></tr></thead>
+        <tbody id="scores"><tr><td colspan="7" class="muted">Loading&hellip;</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem">
+    <h2>Recently Added Models</h2>
+    <p class="hint">Providers are re-read on a schedule; anything that has
+       appeared since is listed here.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Model</th><th>Provider</th><th>First seen</th></tr></thead>
+        <tbody id="new-models"><tr><td colspan="3" class="muted">Loading&hellip;</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem">
+    <h2>Client Keys</h2>
+    <p class="hint">What you paste into your editor. Shown once at creation and
+       stored only as a hash. Revoking is the only way to cut a key off &mdash;
+       keys carry no rate limit or spend cap.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Name</th><th>Status</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+        <tbody id="keys"><tr><td colspan="5" class="muted">Loading&hellip;</td></tr></tbody>
+      </table>
+    </div>
+    <div class="row" style="margin-top:1.25rem">
+      <input id="new-key-name" placeholder="Name (e.g. laptop, ci)">
+      <button class="btn" id="create-key">Create key</button>
+    </div>
+    <div id="key-display" class="key-display"></div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem">
+    <h2>Models</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Model</th><th>Provider</th><th>Requests</th><th>Tokens</th><th>Spend</th><th>Latency (est → observed)</th></tr></thead>
+        <tbody id="models"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem">
+    <h2>Recent Activity</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Time</th><th>Key</th><th>Model</th><th>Provider</th><th>Task</th><th>In</th><th>Out</th><th>Latency</th><th>Cost</th><th>Status</th></tr></thead>
+        <tbody id="usage"><tr><td colspan="9" class="muted">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
 </div>
-<div class="card">
-<h2>API Key Management</h2>
-<button class="btn" onclick="generateKey()">Generate New API Key</button>
-<div id="key-display" class="key-display"></div>
 </div>
-<div class="card" style="margin-top:1.5rem">
-<h2>Recent Usage</h2>
-<table>
-<thead><tr><th>Time</th><th>Model</th><th>Provider</th><th>Tokens</th><th>Latency</th><th>Status</th></tr></thead>
-<tbody id="usage-table"><tr><td colspan="6" style="text-align:center;color:#64748b;padding:2rem">No usage data yet</td></tr></tbody>
-</table>
-</div>
-</div>
+
 <script>
-async function generateKey(){const r=await fetch('/api/keys',{method:'POST'});const d=await r.json();const el=document.getElementById('key-display');el.textContent=d.key;el.classList.add('visible')}
-async function loadStats(){try{const r=await fetch('/api/stats');const d=await r.json();document.getElementById('total-requests').textContent=d.totalRequests||0;document.getElementById('avg-latency').textContent=(d.avgLatency||0)+'ms';document.getElementById('cache-rate').textContent=(d.cacheHitRate||0)+'%'}catch(e){}}
-async function loadUsage(){try{const r=await fetch('/api/usage');const d=await r.json();const tb=document.getElementById('usage-table');if(!d.length)return;tb.innerHTML=d.slice(0,10).map(u=>'<tr><td>'+new Date(u.created_at).toLocaleString()+'</td><td>'+u.model+'</td><td>'+u.provider+'</td><td>'+(u.tokens_in+u.tokens_out)+'</td><td>'+u.latency_ms+'ms</td><td class="'+(u.status==='success'?'status-ok':'status-err')+'">'+u.status+'</td></tr>').join('')}catch(e){}}
-loadStats();loadUsage();setInterval(()=>{loadStats();loadUsage()},30000);
+'use strict';
+class AuthError extends Error {}
+
+let timer = null;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = n => '$' + Number(n || 0).toFixed(Number(n) > 0 && Number(n) < 0.01 ? 4 : 2);
+const num = n => Number(n || 0).toLocaleString();
+
+// Derived from the address the operator actually reached the page on, so it is
+// right behind a reverse proxy or a custom domain without the server having to
+// guess at X-Forwarded-* headers.
+const baseURL = () => window.location.origin + '/v1';
+
+// copyText falls back to selecting the text: the clipboard API needs a secure
+// context, so it throws on a plain-http deployment.
+async function copyText(text, button, sourceEl) {
+  const label = button.textContent;
+  const done = msg => {
+    button.textContent = msg;
+    setTimeout(() => { button.textContent = label; }, 1500);
+  };
+
+  try {
+    await navigator.clipboard.writeText(text);
+    done('Copied');
+  } catch (e) {
+    if (sourceEl) {
+      const range = document.createRange();
+      range.selectNodeContents(sourceEl);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    done('Select + copy');
+  }
+}
+
+// The session lives in an HttpOnly cookie the browser sends automatically, so
+// there is no token for this page to hold — and none for a cross-site script
+// to read, which is the point.
+async function api(path, opts) {
+  const res = await fetch(path, Object.assign({
+    credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'},
+  }, opts || {}));
+
+  // Read the body before deciding: a 401 from /api/login means the password
+  // was wrong, and telling that person their session expired sends them
+  // looking for a problem that is not there.
+  const body = await res.json().catch(() => ({}));
+  const message = (body.error && body.error.message) || null;
+
+  if (res.status === 401) {
+    throw new AuthError(message || 'Your session has ended. Sign in again.');
+  }
+  if (!res.ok) throw new Error(message || ('HTTP ' + res.status));
+  return body;
+}
+
+function showGate(message) {
+  clearInterval(timer);
+  timer = null;
+  $('app').classList.add('hidden');
+  $('gate').classList.remove('hidden');
+
+  const err = $('gate-error');
+  if (message) { err.textContent = message; err.classList.remove('hidden'); }
+  else { err.classList.add('hidden'); }
+
+  $('login-password').value = '';
+  $('login-email').focus();
+}
+
+async function showApp() {
+  $('gate').classList.add('hidden');
+  $('app').classList.remove('hidden');
+
+  try {
+    const me = await api('/api/me');
+    $('whoami').textContent = me.email || (me.admin_token ? 'admin token' : '');
+  } catch (e) { /* the refresh below will surface anything real */ }
+
+  refresh();
+  if (!timer) timer = setInterval(refresh, 30000);
+}
+
+function banner(text) {
+  const el = $('banner');
+  if (!text) { el.classList.add('hidden'); return; }
+  el.textContent = text;
+  el.classList.remove('hidden');
+}
+
+const win = () => $('window').value;
+
+async function loadStats() {
+  const d = await api('/api/stats?window=' + encodeURIComponent(win()));
+  const s = d.summary || {};
+
+  $('s-requests').textContent = num(s.requests);
+  $('s-errors').textContent = s.errors ? s.errors + ' failed' : 'all succeeded';
+  $('s-errors').className = 'stat-label ' + (s.errors ? 'status-err' : 'muted');
+  $('s-latency').textContent = Math.round(s.avg_latency_ms || 0) + 'ms';
+  $('s-cost').textContent = money(s.cost_usd);
+  $('s-tokens').textContent = num((s.tokens_in || 0) + (s.tokens_out || 0)) + ' tokens';
+
+  $('s-tokens-total').textContent = num((s.tokens_in || 0) + (s.tokens_out || 0));
+  $('s-tokens-split').textContent =
+    num(s.tokens_in) + ' in · ' + num(s.tokens_out) + ' out';
+
+  $('s-cache').textContent = Math.round((s.cache_hit_rate || 0) * 100) + '%';
+  const c = d.cache || {};
+  $('s-cache-detail').textContent = c.enabled
+    ? num(s.cache_hits) + ' served from cache'
+    : 'cache disabled';
+
+  const provs = Object.entries(d.providers || {});
+  const active = provs.filter(([, ok]) => ok);
+  $('s-providers').textContent = active.length;
+  $('s-provider-list').textContent = active.length
+    ? active.map(([n]) => n).join(', ')
+    : 'no provider keys stored';
+}
+
+async function loadHealth() {
+  // Health is public, so it needs no token and works even when locked out.
+  try {
+    const d = await (await fetch('/health')).json();
+    const ok = d.status === 'ok';
+    $('health').textContent = ok ? 'Healthy' : 'Degraded';
+    $('health').className = ok ? 'status-ok' : 'status-err';
+  } catch (e) {
+    $('health').textContent = 'Unreachable';
+    $('health').className = 'status-err';
+  }
+}
+
+function providerError(text) {
+  const el = $('provider-error');
+  if (!text) { el.classList.add('hidden'); return; }
+  el.textContent = text;
+  el.classList.remove('hidden');
+}
+
+async function loadProviders() {
+  const d = await api('/v1/admin/providers');
+  const rows = d.data || [];
+  const tb = $('providers');
+
+  // The table refreshes on a timer, and rebuilding it would discard a key the
+  // operator is part-way through pasting. Leave it alone while one is in hand.
+  const busy = Array.from(tb.querySelectorAll('[data-key-input]'))
+    .some(i => i.value !== '' || i === document.activeElement);
+  if (busy) return;
+
+  tb.innerHTML = rows.map(p => {
+    const stale = p.fingerprint === 'undecryptable';
+    const status = !p.configured
+      ? '<span class="muted">not configured</span>'
+      : stale
+        ? '<span class="status-err">will not decrypt</span>'
+        : p.verified
+          ? '<span class="status-ok">verified</span>'
+          : '<span class="status-warn" title="' + esc(p.note || '') + '">unverified</span>';
+
+    const models = p.configured
+      ? num(p.models) + (p.free_models ? ' <span class="free-pill">' + num(p.free_models) + ' free</span>' : '')
+      : '<span class="muted">&mdash;</span>';
+
+    const label = esc(p.label || p.provider) +
+      (p.free_tier ? ' <span class="free-pill">free tier</span>' : '') +
+      (p.console_url && !p.configured
+        ? '<br><a class="console" href="' + esc(p.console_url) +
+          '" target="_blank" rel="noopener noreferrer">get a key &rarr;</a>'
+        : '');
+
+    return '<tr>' +
+      '<td>' + label + '</td>' +
+      '<td>' + status + '</td>' +
+      '<td>' + models + '</td>' +
+      '<td class="mono muted">' + esc(p.fingerprint || '—') + '</td>' +
+      '<td class="row">' +
+        '<input type="password" placeholder="' + (p.configured ? 'Replace key' : 'Paste key') +
+          '" data-key-input="' + esc(p.provider) + '" autocomplete="off" style="width:200px">' +
+        '<button class="btn small" data-save="' + esc(p.provider) + '">Save</button>' +
+        (p.configured
+          ? '<button class="btn danger small" data-remove="' + esc(p.provider) + '">Remove</button>'
+          : '') +
+      '</td></tr>';
+  }).join('');
+
+  const sel = $('provider-filter');
+  if (sel && sel.options.length !== rows.filter(p => p.configured).length + 1) {
+    const current = sel.value;
+    sel.innerHTML = '<option value="">All providers</option>' +
+      rows.filter(p => p.configured)
+          .map(p => '<option value="' + esc(p.provider) + '">' + esc(p.label || p.provider) + '</option>')
+          .join('');
+    sel.value = current;
+  }
+
+  tb.querySelectorAll('[data-save]').forEach(b =>
+    b.addEventListener('click', () => saveProviderKey(b.getAttribute('data-save'), b)));
+  tb.querySelectorAll('[data-remove]').forEach(b =>
+    b.addEventListener('click', () => removeProviderKey(b.getAttribute('data-remove'))));
+}
+
+async function saveProviderKey(name, button) {
+  const input = document.querySelector('[data-key-input="' + name + '"]');
+  const value = input.value.trim();
+  if (!value) { providerError('Paste a ' + name + ' key first.'); return; }
+
+  // Verification calls the provider, so say what is happening rather than
+  // leaving the button looking unresponsive for a second or two.
+  providerError('');
+  const label = button.textContent;
+  button.textContent = 'Verifying…';
+  button.disabled = true;
+
+  try {
+    await api('/v1/admin/providers/' + encodeURIComponent(name), {
+      method: 'PUT',
+      body: JSON.stringify({api_key: value}),
+    });
+    input.value = '';
+    input.blur();
+    await Promise.all([loadProviders(), loadStats()]);
+  } catch (e) {
+    if (e instanceof AuthError) { handle(e); return; }
+    providerError(e.message);
+    button.textContent = label;
+    button.disabled = false;
+  }
+}
+
+async function removeProviderKey(name) {
+  if (!confirm('Remove the stored ' + name + ' key? Requests routed to ' + name +
+               ' will fail until another is saved.')) return;
+  try {
+    providerError('');
+    await api('/v1/admin/providers/' + encodeURIComponent(name), {method: 'DELETE'});
+    await Promise.all([loadProviders(), loadStats()]);
+  } catch (e) {
+    if (e instanceof AuthError) { handle(e); return; }
+    providerError(e.message);
+  }
+}
+
+let catalogueRows = [];
+let freeOnly = false;
+
+async function loadSettings() {
+  const d = await api('/api/settings');
+  freeOnly = !!d.free_only;
+
+  const btn = $('free-only-toggle');
+  btn.textContent = freeOnly ? 'Free models only' : 'All models';
+  btn.classList.toggle('on', freeOnly);
+
+  $('free-only-state').textContent = freeOnly
+    ? 'Requests are restricted to models published at zero cost (' + num(d.free_models) + ' known).'
+    : 'Requests may use any model, priced or not. ' + num(d.free_models) + ' free models are available.';
+}
+
+async function toggleFreeOnly(button) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Saving…';
+  try {
+    banner('');
+    await api('/api/settings', {
+      method: 'PUT',
+      body: JSON.stringify({free_only: !freeOnly}),
+    });
+  } catch (e) {
+    // Only a failed save should restore the old label. Reloading the views is
+    // separate: if one of those throws, the setting still changed and showing
+    // the previous state would be a lie.
+    handle(e);
+    button.textContent = label;
+    button.disabled = false;
+    return;
+  }
+
+  button.disabled = false;
+  try {
+    await Promise.all([loadSettings(), loadCatalogue()]);
+  } catch (e) {
+    handle(e);
+  }
+}
+
+async function loadCatalogue() {
+  const params = new URLSearchParams();
+  if ($('free-only-view').checked) params.set('free', 'true');
+  const prov = $('provider-filter').value;
+  if (prov) params.set('provider', prov);
+
+  const d = await api('/api/catalogue' + (params.toString() ? '?' + params : ''));
+  catalogueRows = d.data || [];
+
+  const tagged = d.tagged || {};
+  const parts = Object.entries(tagged).map(([task, n]) => n + ' marked for ' + task.replace('_generation', ''));
+  $('tag-summary').innerHTML = parts.length
+    ? '<strong class="status-ok">' + esc(parts.join(', ')) + '.</strong>'
+    : 'Nothing is marked yet, so routing infers fitness from model names.';
+
+  $('catalogue-summary').textContent =
+    d.total === 0
+      ? ($('free-only-view').checked ? 'no free models discovered' : 'no models discovered yet — save a provider key')
+      : num(d.total) + ($('free-only-view').checked ? ' free' : '') + ' models' +
+        (d.truncated ? ' (showing ' + num(catalogueRows.length) + ', shared across providers)' : '') +
+        (d.free_only ? ' · free-only mode is on' : '');
+
+  renderCatalogue();
+}
+
+function renderCatalogue() {
+  const needle = $('model-filter').value.trim().toLowerCase();
+  const rows = needle
+    ? catalogueRows.filter(m => m.model.toLowerCase().includes(needle) ||
+                                m.provider.toLowerCase().includes(needle))
+    : catalogueRows;
+
+  const tb = $('catalogue');
+  if (!rows.length) {
+    tb.innerHTML = '<tr><td colspan="4" class="muted">' +
+      (catalogueRows.length ? 'Nothing matches that filter' : 'No models') + '</td></tr>';
+    return;
+  }
+
+  const price = v => v === undefined || v === null
+    ? '<span class="muted">unpriced</span>'
+    : (Number(v) === 0 ? '<span class="free-pill">free</span>' : '$' + Number(v).toFixed(2));
+
+  // Two marks are offered here; the API accepts analysis and creative too.
+  const marks = [['code_generation', 'coding'], ['conversation', 'chat']];
+
+  tb.innerHTML = rows.map(m => {
+    const tasks = m.tasks || [];
+    const buttons = marks.map(([task, label]) =>
+      '<button class="tagbtn' + (tasks.includes(task) ? ' on' : '') +
+      '" data-tag-provider="' + esc(m.provider) + '" data-tag-model="' + esc(m.model) +
+      '" data-tag-task="' + task + '">' + label + '</button>').join('');
+
+    return '<tr><td class="mono">' + esc(m.model) + '</td>' +
+      '<td>' + esc(m.provider) + '</td>' +
+      '<td>' + price(m.input_cost_per_1m) + '</td>' +
+      '<td>' + price(m.output_cost_per_1m) + '</td>' +
+      '<td>' + buttons + '</td></tr>';
+  }).join('');
+
+  tb.querySelectorAll('[data-tag-task]').forEach(b =>
+    b.addEventListener('click', () => toggleTag(b)));
+}
+
+// toggleTag flips one mark on one model. The whole tag set for that model is
+// sent, because the API replaces rather than merges — what the row shows is
+// exactly what is stored.
+async function toggleTag(button) {
+  const provider = button.getAttribute('data-tag-provider');
+  const model = button.getAttribute('data-tag-model');
+  const task = button.getAttribute('data-tag-task');
+
+  const row = catalogueRows.find(m => m.provider === provider && m.model === model);
+  if (!row) return;
+
+  const tasks = new Set(row.tasks || []);
+  if (tasks.has(task)) tasks.delete(task); else tasks.add(task);
+
+  button.disabled = true;
+  try {
+    banner('');
+    await api('/v1/admin/model-tags', {
+      method: 'PUT',
+      body: JSON.stringify({provider: provider, model: model, tasks: [...tasks]}),
+    });
+    row.tasks = [...tasks];
+    button.classList.toggle('on', tasks.has(task));
+    await loadCatalogue();
+  } catch (e) { handle(e); }
+  button.disabled = false;
+}
+
+async function rediscover(button) {
+  const label = button.textContent;
+  button.textContent = 'Asking providers…';
+  button.disabled = true;
+  try {
+    banner('');
+    const d = await api('/api/discover', {method: 'POST'});
+    banner('');
+    await Promise.all([loadCatalogue(), loadProviders()]);
+    const tagged = d.tagged || {};
+  const parts = Object.entries(tagged).map(([task, n]) => n + ' marked for ' + task.replace('_generation', ''));
+  $('tag-summary').innerHTML = parts.length
+    ? '<strong class="status-ok">' + esc(parts.join(', ')) + '.</strong>'
+    : 'Nothing is marked yet, so routing infers fitness from model names.';
+
+  $('catalogue-summary').textContent = num(d.models) + ' models, ' + num(d.free) + ' free';
+  } catch (e) { handle(e); }
+  button.textContent = label;
+  button.disabled = false;
+}
+
+async function loadScores() {
+  const task = $('score-task').value;
+  const d = await api('/api/scores?task=' + encodeURIComponent(task));
+  const rows = d.data || [];
+  const tb = $('scores');
+
+  $('score-note').textContent = rows.length
+    ? 'over the last ' + esc(d.window)
+    : 'no traffic yet — scores appear once requests have been made';
+
+  if (!rows.length) {
+    tb.innerHTML = '<tr><td colspan="7" class="muted">No traffic in the window</td></tr>';
+    return;
+  }
+
+  const suitClass = s => s === 'strong' ? 'status-ok' : s === 'poor' ? 'status-err' : 'muted';
+
+  tb.innerHTML = rows.map(m => {
+    const rate = Math.round((m.success_rate || 0) * 100);
+    const rateClass = rate >= 90 ? 'status-ok' : rate >= 50 ? 'status-warn' : 'status-err';
+    // A thin sample is worth saying so: one bad call is not evidence.
+    const thin = m.confidence < 1 ? ' <span class="muted">(thin)</span>' : '';
+    return '<tr>' +
+      '<td class="mono">' + esc(m.model) + '</td>' +
+      '<td>' + esc(m.provider) + '</td>' +
+      '<td>' + num(m.attempts) + '</td>' +
+      '<td class="' + rateClass + '">' + rate + '%' + thin + '</td>' +
+      '<td>' + (m.median_ms ? num(m.median_ms) + 'ms' : '<span class="muted">—</span>') + '</td>' +
+      '<td class="' + suitClass(m.suits_task) + '">' + esc(m.suits_task) + '</td>' +
+      '<td>' + (m.score === undefined ? '<span class="muted">—</span>' : m.score.toFixed(2)) + '</td>' +
+      '</tr>';
+  }).join('');
+}
+
+async function loadNewModels() {
+  const d = await api('/api/new-models?window=' + encodeURIComponent(win()));
+  const rows = d.data || [];
+  const tb = $('new-models');
+
+  if (!rows.length) {
+    tb.innerHTML = '<tr><td colspan="3" class="muted">Nothing new in this window</td></tr>';
+    return;
+  }
+
+  tb.innerHTML = rows.map(m =>
+    '<tr><td class="mono">' + esc(m.model) +
+      (m.free ? ' <span class="free-pill">free</span>' : '') + '</td>' +
+    '<td>' + esc(m.provider) + '</td>' +
+    '<td class="muted">' + new Date(m.first_seen).toLocaleString() + '</td></tr>').join('');
+}
+
+async function loadKeys() {
+  const d = await api('/api/keys');
+  const rows = d.data || [];
+  const tb = $('keys');
+
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">No keys yet</td></tr>'; return; }
+
+  tb.innerHTML = rows.map(k => {
+    const revoked = !!k.disabled_at;
+    return '<tr>' +
+      '<td>' + esc(k.name || '(unnamed)') + '</td>' +
+      '<td class="' + (revoked ? 'status-err' : 'status-ok') + '">' +
+        (revoked ? 'revoked' : 'active') + '</td>' +
+      '<td class="muted">' + when(k.created_at) + '</td>' +
+      '<td class="muted">' + when(k.last_used_at) + '</td>' +
+      '<td>' + (revoked ? '' :
+        '<button class="btn danger small" data-revoke="' + esc(k.id) +
+        '" data-name="' + esc(k.name || '(unnamed)') + '">Revoke</button>') +
+      '</td></tr>';
+  }).join('');
+
+  tb.querySelectorAll('[data-revoke]').forEach(b =>
+    b.addEventListener('click', () =>
+      revokeKey(b.getAttribute('data-revoke'), b.getAttribute('data-name'))));
+}
+
+// A never-used key has a null timestamp.
+function when(value) {
+  if (!value) return 'never';
+  const d = new Date(value);
+  if (isNaN(d) || d.getFullYear() < 2000) return 'never';
+  return d.toLocaleString();
+}
+
+async function createKey() {
+  const name = $('new-key-name').value.trim();
+  if (!name) { banner('Give the key a name so you can tell it apart later.'); return; }
+
+  try {
+    banner('');
+    const d = await api('/v1/admin/keys', {
+      method: 'POST',
+      body: JSON.stringify({name: name}),
+    });
+
+    // Both halves of what an editor needs, together: the key is only ever
+    // shown once, and it is useless without the endpoint.
+    const el = $('key-display');
+    el.innerHTML =
+      '<div class="field"><span class="label">Base URL</span>' +
+        '<span class="value" id="minted-url">' + esc(baseURL()) + '</span>' +
+        '<button class="btn ghost small" id="copy-minted-url">Copy</button></div>' +
+      '<div class="field"><span class="label">API key</span>' +
+        '<span class="value" id="minted-key">' + esc(d.key) + '</span>' +
+        '<button class="btn ghost small" id="copy-minted-key">Copy</button></div>' +
+      '<div class="warn-note">' + esc(d.warning) + '</div>';
+    el.classList.add('visible');
+
+    $('copy-minted-url').addEventListener('click', ev =>
+      copyText(baseURL(), ev.currentTarget, $('minted-url')));
+    $('copy-minted-key').addEventListener('click', ev =>
+      copyText(d.key, ev.currentTarget, $('minted-key')));
+
+    $('new-key-name').value = '';
+    await loadKeys();
+  } catch (e) { handle(e); }
+}
+
+async function revokeKey(id, name) {
+  if (!confirm('Revoke the key "' + name + '"? Anything using it stops working immediately.')) return;
+  try {
+    banner('');
+    await api('/v1/admin/keys/' + encodeURIComponent(id), {method: 'DELETE'});
+    await loadKeys();
+  } catch (e) { handle(e); }
+}
+
+async function loadModels() {
+  const d = await api('/api/models?window=' + encodeURIComponent(win()));
+  const usage = d.usage || [];
+  const cat = {};
+  (d.catalogue || []).forEach(c => { cat[c.model] = c; });
+
+  const tb = $('models');
+  if (!usage.length) { tb.innerHTML = '<tr><td colspan="6" class="muted">No traffic in this window</td></tr>'; return; }
+
+  tb.innerHTML = usage.map(m => {
+    const c = cat[m.model];
+    // A cache replay never touched the model, so the catalogue's estimate for
+    // it says nothing; show what the replay actually cost in time.
+    let latency = Math.round(m.latency_ms) + 'ms';
+    if (c && m.provider !== 'cache') {
+      latency = c.estimated_ms + 'ms → ' +
+        (c.observed_ms ? c.observed_ms + 'ms' : '<span class="muted">not yet measured</span>');
+    }
+    return '<tr><td>' + esc(m.model) + '</td><td>' + esc(m.provider) + '</td><td>' +
+      num(m.requests) + '</td><td>' + num(m.tokens) + '</td><td>' + money(m.cost_usd) +
+      '</td><td>' + latency + '</td></tr>';
+  }).join('');
+}
+
+async function loadUsage() {
+  const d = await api('/api/usage?limit=50');
+  const rows = d.data || [];
+  const tb = $('usage');
+
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="10" class="muted">No usage data yet</td></tr>'; return; }
+
+  tb.innerHTML = rows.map(u => '<tr>' +
+    '<td>' + new Date(u.created_at).toLocaleString() + '</td>' +
+    '<td>' + esc(u.key_name || '—') + '</td>' +
+    '<td>' + esc(u.model) + (u.cache_hit ? ' <span class="pill hit">cached</span>' : '') + '</td>' +
+    '<td>' + esc(u.provider) + '</td>' +
+    '<td><span class="pill">' + esc(u.task || 'unknown') + '</span></td>' +
+    '<td>' + num(u.tokens_in) + '</td>' +
+    '<td>' + num(u.tokens_out) + '</td>' +
+    '<td>' + num(u.latency_ms) + 'ms</td>' +
+    '<td>' + money(u.cost_usd) + '</td>' +
+    '<td class="' + (u.status === 'success' ? 'status-ok' : 'status-err') + '"' +
+      (u.failure ? ' title="' + esc(u.failure) + '"' : '') + '>' + esc(u.status) +
+      (u.failure ? ' <span class="muted">ⓘ</span>' : '') + '</td>' +
+    '</tr>').join('');
+}
+
+function handle(err) {
+  if (err instanceof AuthError) { showGate(err.message); return; }
+  banner(err.message);
+}
+
+async function refresh() {
+  loadHealth();
+  try {
+    banner('');
+    await Promise.all([loadStats(), loadSettings(), loadProviders(), loadCatalogue(),
+                       loadScores(), loadNewModels(), loadKeys(), loadModels(), loadUsage()]);
+  } catch (e) { handle(e); }
+}
+
+$('gate-form').addEventListener('submit', async ev => {
+  ev.preventDefault();
+
+  const email = $('login-email').value.trim();
+  const password = $('login-password').value;
+  if (!email || !password) {
+    showGate('Enter your email and password.');
+    return;
+  }
+
+  const button = $('login-button');
+  button.disabled = true;
+  button.textContent = 'Signing in…';
+
+  try {
+    // The server sets an HttpOnly cookie; nothing sensitive comes back here.
+    await api('/api/login', {
+      method: 'POST',
+      body: JSON.stringify({email: email, password: password}),
+    });
+    $('gate-error').classList.add('hidden');
+    $('login-password').value = '';
+    await showApp();
+  } catch (e) {
+    // AuthError is the ordinary wrong-password case; anything else is worth
+    // showing verbatim, since it may be a lockout or a setup problem.
+    showGate(e.message);
+  }
+
+  button.disabled = false;
+  button.textContent = 'Sign in';
+});
+
+$('base-url').textContent = baseURL();
+$('copy-base-url').addEventListener('click', ev =>
+  copyText(baseURL(), ev.currentTarget, $('base-url')));
+
+$('signout').addEventListener('click', async () => {
+  try { await api('/api/logout', {method: 'POST'}); } catch (e) { /* sign out locally regardless */ }
+  showGate('');
+});
+$('window').addEventListener('change', refresh);
+$('create-key').addEventListener('click', createKey);
+$('free-only-view').addEventListener('change', () => loadCatalogue().catch(handle));
+$('provider-filter').addEventListener('change', () => loadCatalogue().catch(handle));
+$('free-only-toggle').addEventListener('click', ev => toggleFreeOnly(ev.currentTarget));
+$('score-task').addEventListener('change', () => loadScores().catch(handle));
+$('model-filter').addEventListener('input', renderCatalogue);
+$('rediscover').addEventListener('click', ev => rediscover(ev.currentTarget));
+$('new-key-name').addEventListener('keydown', ev => { if (ev.key === 'Enter') createKey(); });
+
+// Whether a session exists is the server's business, not this page's: ask.
+(async () => {
+  loadHealth();
+  try {
+    const me = await api('/api/me');
+    $('whoami').textContent = me.email || (me.admin_token ? 'admin token' : '');
+    await showApp();
+  } catch (e) {
+    showGate('');
+    // Say plainly when there is nothing to sign in to yet.
+    if (!(e instanceof AuthError)) $('gate-hint').textContent = e.message;
+  }
+})();
 </script>
 </body>
 </html>
-
