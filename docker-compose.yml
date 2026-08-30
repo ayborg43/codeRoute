@@ -1,0 +1,65 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: coderouter
+      POSTGRES_USER: coderouter
+      POSTGRES_PASSWORD: coderouter
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coderouter"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  coderouter:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://coderouter:coderouter@postgres:5432/coderouter?sslmode=disable
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-change-me-in-production-32bytes!}
+      PORT: "8080"
+      # BYOK bootstrap: these are encrypted into provider_keys on startup.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      # Smart routing: auto (only when the client asks for "auto"), always, off.
+      ROUTING_MODE: ${ROUTING_MODE:-auto}
+      ROUTING_OBJECTIVE: ${ROUTING_OBJECTIVE:-balanced}
+      # IoT: point at your broker to enable the MQTT bridge. Unset leaves the
+      # MQTT half off; the /v1/iot HTTP endpoints stay available either way.
+      MQTT_BROKER: ${MQTT_BROKER:-}
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      MQTT_TOPIC_PREFIX: ${MQTT_TOPIC_PREFIX:-coderouter/v1}
+      # An OpenAI-compatible local model server; tried before the cloud.
+      IOT_EDGE_ENDPOINT: ${IOT_EDGE_ENDPOINT:-}
+      IOT_API_KEY: ${IOT_API_KEY:-}
+      # Optional endpoint overrides for proxies or local OpenAI-compatible servers.
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      GOOGLE_BASE_URL: ${GOOGLE_BASE_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Opt-in broker for local IoT testing: docker compose --profile iot up
+  mosquitto:
+    image: eclipse-mosquitto:2
+    profiles: ["iot"]
+    ports:
+      - "1883:1883"
+    command: >
+      sh -c "printf 'listener 1883\\nallow_anonymous true\\n' > /mosquitto/config/mosquitto.conf
+      && exec mosquitto -c /mosquitto/config/mosquitto.conf"
+
+volumes:
+  pgdata:
+

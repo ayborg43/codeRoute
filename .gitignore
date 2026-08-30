@@ -1,0 +1,17 @@
+# Compiled binary
+/coderouter
+*.exe
+*.test
+
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+
+# Go
+vendor/
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/

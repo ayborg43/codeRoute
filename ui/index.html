@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CodeRouter Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh}
+.nav{background:#1e293b;padding:1rem 2rem;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #334155}
+.nav h1{font-size:1.25rem;font-weight:600;color:#f8fafc}
+.container{max-width:1200px;margin:2rem auto;padding:0 2rem}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1.5rem;margin-bottom:2rem}
+.card{background:#1e293b;border-radius:0.5rem;padding:1.5rem;border:1px solid #334155}
+.card h2{font-size:0.875rem;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;margin-bottom:1rem}
+.stat{font-size:2rem;font-weight:700;color:#f8fafc}
+.stat-label{font-size:0.75rem;color:#64748b;margin-top:0.25rem}
+.btn{background:#3b82f6;color:#fff;border:none;padding:0.75rem 1.5rem;border-radius:0.375rem;cursor:pointer;font-size:0.875rem;font-weight:500;transition:background 0.2s}
+.btn:hover{background:#2563eb}
+.key-display{background:#0f172a;border:1px solid #334155;border-radius:0.375rem;padding:1rem;margin-top:1rem;font-family:monospace;font-size:0.875rem;word-break:break-all;display:none}
+.key-display.visible{display:block}
+table{width:100%;border-collapse:collapse;margin-top:1rem}
+th,td{text-align:left;padding:0.75rem;border-bottom:1px solid #334155;font-size:0.875rem}
+th{color:#94a3b8;font-weight:500;text-transform:uppercase;letter-spacing:0.05em;font-size:0.75rem}
+.status-ok{color:#22c55e}
+.status-err{color:#ef4444}
+</style>
+</head>
+<body>
+<nav class="nav"><h1>CodeRouter</h1><div id="health" class="status-ok">Healthy</div></nav>
+<div class="container">
+<div class="grid">
+<div class="card"><h2>Total Requests</h2><div class="stat" id="total-requests">0</div><div class="stat-label">Last 24 hours</div></div>
+<div class="card"><h2>Avg Latency</h2><div class="stat" id="avg-latency">0ms</div><div class="stat-label">Across all providers</div></div>
+<div class="card"><h2>Cache Hit Rate</h2><div class="stat" id="cache-rate">0%</div><div class="stat-label">Semantic cache</div></div>
+<div class="card"><h2>Active Providers</h2><div class="stat" id="active-providers">3</div><div class="stat-label">OpenAI, Anthropic, Google</div></div>
+</div>
+<div class="card">
+<h2>API Key Management</h2>
+<button class="btn" onclick="generateKey()">Generate New API Key</button>
+<div id="key-display" class="key-display"></div>
+</div>
+<div class="card" style="margin-top:1.5rem">
+<h2>Recent Usage</h2>
+<table>
+<thead><tr><th>Time</th><th>Model</th><th>Provider</th><th>Tokens</th><th>Latency</th><th>Status</th></tr></thead>
+<tbody id="usage-table"><tr><td colspan="6" style="text-align:center;color:#64748b;padding:2rem">No usage data yet</td></tr></tbody>
+</table>
+</div>
+</div>
+<script>
+async function generateKey(){const r=await fetch('/api/keys',{method:'POST'});const d=await r.json();const el=document.getElementById('key-display');el.textContent=d.key;el.classList.add('visible')}
+async function loadStats(){try{const r=await fetch('/api/stats');const d=await r.json();document.getElementById('total-requests').textContent=d.totalRequests||0;document.getElementById('avg-latency').textContent=(d.avgLatency||0)+'ms';document.getElementById('cache-rate').textContent=(d.cacheHitRate||0)+'%'}catch(e){}}
+async function loadUsage(){try{const r=await fetch('/api/usage');const d=await r.json();const tb=document.getElementById('usage-table');if(!d.length)return;tb.innerHTML=d.slice(0,10).map(u=>'<tr><td>'+new Date(u.created_at).toLocaleString()+'</td><td>'+u.model+'</td><td>'+u.provider+'</td><td>'+(u.tokens_in+u.tokens_out)+'</td><td>'+u.latency_ms+'ms</td><td class="'+(u.status==='success'?'status-ok':'status-err')+'">'+u.status+'</td></tr>').join('')}catch(e){}}
+loadStats();loadUsage();setInterval(()=>{loadStats();loadUsage()},30000);
+</script>
+</body>
+</html>
+
