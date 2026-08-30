@@ -14,6 +14,7 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 
+	"github.com/coderouter/coderouter/internal/db"
 	"github.com/coderouter/coderouter/internal/provider"
 )
 
@@ -54,7 +55,7 @@ type MessageHandler func(msg MQTTMessage) error
 // Router is the slice of the gateway the bridge needs, kept as an interface so
 // device handling stays testable without live providers.
 type Router interface {
-	Complete(ctx context.Context, req *provider.ChatRequest, keyID string) (*provider.ChatResponse, error)
+	Complete(ctx context.Context, req *provider.ChatRequest, key *db.ClientKey) (*provider.ChatResponse, error)
 }
 
 // TelemetryStore is the persistence the bridge needs, as an interface so
@@ -72,8 +73,8 @@ type Config struct {
 	Password     string
 	TopicPrefix  string
 	EdgeEndpoint string
-	// APIKeyID attributes MQTT-originated usage, which has no HTTP caller.
-	APIKeyID string
+	// APIKey attributes MQTT-originated usage, which has no HTTP caller.
+	APIKey *db.ClientKey
 }
 
 type Bridge struct {
@@ -290,15 +291,15 @@ func (b *Bridge) RecentTelemetry(ctx context.Context, deviceID string, limit int
 
 // Infer serves an MQTT-originated request, attributed to the configured IoT key.
 func (b *Bridge) Infer(ctx context.Context, req InferenceRequest) (*InferenceResponse, error) {
-	return b.InferAs(ctx, req, b.cfg.APIKeyID)
+	return b.InferAs(ctx, req, b.cfg.APIKey)
 }
 
 // InferAs serves a device request from the edge when one is configured, falling
 // back to the cloud providers through the gateway. Usage is attributed to
 // keyID, so HTTP callers are billed to their own key.
-func (b *Bridge) InferAs(ctx context.Context, req InferenceRequest, keyID string) (*InferenceResponse, error) {
-	if keyID == "" {
-		keyID = b.cfg.APIKeyID
+func (b *Bridge) InferAs(ctx context.Context, req InferenceRequest, key *db.ClientKey) (*InferenceResponse, error) {
+	if key == nil {
+		key = b.cfg.APIKey
 	}
 	if strings.TrimSpace(req.Prompt) == "" {
 		return nil, fmt.Errorf("prompt must not be empty")
@@ -331,7 +332,7 @@ func (b *Bridge) InferAs(ctx context.Context, req InferenceRequest, keyID string
 		return nil, fmt.Errorf("no router configured for cloud inference")
 	}
 
-	resp, err := b.router.Complete(ctx, chat, keyID)
+	resp, err := b.router.Complete(ctx, chat, key)
 	if err != nil {
 		return nil, err
 	}

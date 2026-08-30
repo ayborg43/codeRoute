@@ -8,14 +8,17 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/coderouter/coderouter/internal/api"
+	"github.com/coderouter/coderouter/internal/cache"
 	"github.com/coderouter/coderouter/internal/config"
 	"github.com/coderouter/coderouter/internal/db"
 	"github.com/coderouter/coderouter/internal/gateway"
 	"github.com/coderouter/coderouter/internal/iot"
+	"github.com/coderouter/coderouter/internal/provider"
 	"github.com/coderouter/coderouter/migrations"
 )
 
@@ -44,7 +47,50 @@ func main() {
 		log.Fatal(err)
 	}
 
-	gw := gateway.New(database, cfg)
+	catalog, err := cfg.Catalog()
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("routing catalogue holds %d models", len(catalog.Profiles()))
+
+	// ctx lives for the process, cancelling the background loops on shutdown.
+	ctx, shutdown := context.WithCancel(context.Background())
+	defer shutdown()
+
+	gw, err := gateway.New(database, gateway.Options{
+		Config:  cfg,
+		Catalog: catalog,
+		Cache:   buildCache(database, cfg),
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("%d providers configured", len(gw.Specs()))
+
+	if err := gw.LoadDiscoveredModels(ctx); err != nil {
+		log.Printf("could not load cached model lists: %v", err)
+	}
+	if err := gw.LoadModelTags(ctx); err != nil {
+		log.Printf("could not load model markings: %v", err)
+	}
+	gw.StartDiscovery(ctx, cfg.DiscoveryInterval)
+	gw.StartLatencyFeedback(ctx, cfg.LatencyFeedback)
+
+	// A runtime toggle outlives the process, so a stored override wins over
+	// the environment default — otherwise a restart would silently undo it.
+	switch stored, err := db.FreeOnlySetting(ctx, database); {
+	case err == nil:
+		gw.SetFreeOnly(stored)
+	case errors.Is(err, db.ErrNoSetting):
+		// Never toggled; the environment default stands.
+	default:
+		log.Printf("could not read the free-only setting (%v); using FREE_ONLY=%v", err, cfg.FreeOnly)
+	}
+
+	if gw.FreeOnly() {
+		log.Print("free-only mode is on; only models published at zero cost will be routed to")
+	}
+
 	bridge := startBridge(database, cfg, gw)
 	handler := api.NewHandler(gw, database, cfg, bridge)
 
@@ -68,10 +114,12 @@ func main() {
 	<-stop
 
 	log.Print("shutdown signal received, draining connections")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdown()
+
+	drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(drainCtx); err != nil {
 		log.Printf("graceful shutdown timed out: %v", err)
 	}
 	bridge.Close()
@@ -101,9 +149,74 @@ func bootstrap(database *sql.DB, cfg *config.Config) error {
 			return err
 		}
 		log.Printf("no client keys found; created one (shown once): %s", rawKey)
+		log.Print("WARNING: client keys carry no rate limit or spend cap; " +
+			"a leaked key means uncapped spend against your provider keys")
 	}
 
 	return nil
+}
+
+// buildCache assembles the semantic cache. Embeddings are billed to the stored
+// OpenAI key, which is resolved per call rather than captured here: a key added
+// through the dashboard after startup brings the cache to life without a
+// restart, and a rotated one takes effect within providerKeyTTL.
+func buildCache(database *sql.DB, cfg *config.Config) *cache.SemanticCache {
+	if !cfg.Cache.Enabled {
+		log.Print("cache: CACHE_ENABLED is false; semantic cache disabled")
+		return nil
+	}
+
+	resolver := &providerKeyResolver{db: database, encryptionKey: cfg.EncryptionKey}
+
+	return cache.New(database, cache.Options{
+		Embedder: &provider.OpenAIEmbedder{
+			BaseURL: cfg.EmbeddingEndpoint(),
+			Key:     func() (string, error) { return resolver.get("openai") },
+			Model:   cfg.Cache.EmbeddingModel,
+			Client:  &http.Client{Timeout: 30 * time.Second},
+		},
+		Threshold: cfg.Cache.Threshold,
+		TTL:       cfg.Cache.TTL,
+	})
+}
+
+// providerKeyTTL bounds how stale a cached provider key may be. Short enough
+// that rotating a key through the dashboard takes effect promptly, long enough
+// that embedding traffic does not query and decrypt on every request.
+const providerKeyTTL = 30 * time.Second
+
+// providerKeyResolver reads upstream keys on demand, memoising briefly.
+type providerKeyResolver struct {
+	db            *sql.DB
+	encryptionKey []byte
+
+	mu     sync.Mutex
+	key    string
+	name   string
+	loaded time.Time
+}
+
+func (r *providerKeyResolver) get(name string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.name == name && time.Since(r.loaded) < providerKeyTTL {
+		return r.key, nil
+	}
+
+	key, err := db.ProviderKey(r.db, r.encryptionKey, name)
+	if errors.Is(err, db.ErrNoProviderKey) {
+		// Not yet configured. Cache the absence too, so a deployment with no
+		// key does not query on every request.
+		r.name, r.key, r.loaded = name, "", time.Now()
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+
+	r.name, r.key, r.loaded = name, key, time.Now()
+	return key, nil
 }
 
 // startBridge wires the IoT bridge. A broker that will not connect is logged
@@ -116,7 +229,7 @@ func startBridge(database *sql.DB, cfg *config.Config, gw *gateway.Gateway) *iot
 		Password:     cfg.IoT.Password,
 		TopicPrefix:  cfg.IoT.TopicPrefix,
 		EdgeEndpoint: cfg.IoT.EdgeEndpoint,
-		APIKeyID:     resolveIoTKey(database, cfg.IoT.APIKey),
+		APIKey:       resolveIoTKey(database, cfg.IoT.APIKey),
 	}, gw, iot.NewStore(database))
 
 	if cfg.IoT.EdgeEndpoint != "" {
@@ -138,14 +251,14 @@ func startBridge(database *sql.DB, cfg *config.Config, gw *gateway.Gateway) *iot
 
 // resolveIoTKey turns the configured raw client key into an id for usage
 // attribution of MQTT traffic, which has no HTTP caller to authenticate.
-func resolveIoTKey(database *sql.DB, raw string) string {
+func resolveIoTKey(database *sql.DB, raw string) *db.ClientKey {
 	if raw == "" {
-		return ""
+		return nil
 	}
 	key, err := db.ValidateClientKey(database, raw)
 	if err != nil {
 		log.Printf("iot: IOT_API_KEY is not a valid client key (%v); MQTT usage will be unattributed", err)
-		return ""
+		return nil
 	}
-	return key.ID
+	return key
 }
