@@ -89,10 +89,14 @@ mistyped key is refused there and then. They are never readable back — the
 dashboard shows a fingerprint.
 
 The dashboard asks for an email and password. Sessions are HttpOnly cookies
-valid for 12 hours, and are marked Secure automatically when the request
-arrives over TLS — set `TRUST_PROXY_HEADERS=true` behind a proxy that
-terminates TLS, or the cookie will not be marked Secure and the sign-in
-lockout can be evaded by forging `X-Forwarded-For`.
+valid for 12 hours.
+
+`docker-compose.dokploy.yml` sets `TRUST_PROXY_HEADERS=true`, because Traefik
+terminates TLS and the gateway would otherwise only ever see plain HTTP — the
+session cookie would never be marked Secure, however good the certificate out
+front. If you route to the gateway some other way, set it back to `false`:
+those headers are trivially forged, and believing them without a proxy in
+front lets an attacker evade the sign-in lockout by varying `X-Forwarded-For`.
 
 With neither an account nor an `ADMIN_TOKEN`, both APIs answer with a clear
 "not set up" response rather than serving anything.
