@@ -139,10 +139,10 @@ type PlannedStep struct {
 // Plan reports the chain a request for this model would try, in order, without
 // sending anything. Routing decisions are otherwise only visible in hindsight
 // through the usage log, which is a poor way to answer "what will it do".
-func (g *Gateway) Plan(model string) ([]PlannedStep, string, error) {
+func (g *Gateway) Plan(model string) ([]PlannedStep, string, string, error) {
 	keys, err := g.ConfiguredKeys()
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 
 	req := &provider.ChatRequest{
@@ -160,7 +160,15 @@ func (g *Gateway) Plan(model string) ([]PlannedStep, string, error) {
 			Cooldown: !g.allow(c.provider),
 		})
 	}
-	return steps, string(task), nil
+
+	// An empty chain is exactly when an explanation is worth most, and
+	// returning a bare empty list left the operator to guess between "no keys",
+	// "marks too narrow" and "everything is sidelined".
+	var reason string
+	if len(steps) == 0 {
+		reason = g.unroutable(req, keys).Error()
+	}
+	return steps, string(task), reason, nil
 }
 
 // Catalog exposes the routing catalogue, for the models endpoint and pricing.
@@ -995,7 +1003,14 @@ func (g *Gateway) ProviderNames() []string {
 }
 
 // ConfiguredKeys returns the decrypted upstream keys, by provider.
+//
+// A gateway with no database has no stored keys rather than being an error:
+// that is the shape used by tests, and a nil dereference is a poor way to say
+// "nothing is configured".
 func (g *Gateway) ConfiguredKeys() (map[string]string, error) {
+	if g.db == nil {
+		return map[string]string{}, nil
+	}
 	return db.ProviderKeys(g.db, g.cfg.EncryptionKey)
 }
 

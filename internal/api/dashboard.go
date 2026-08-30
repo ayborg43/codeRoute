@@ -477,18 +477,22 @@ func (h *Handler) dashboardRoute(w http.ResponseWriter, r *http.Request) {
 		model = "auto"
 	}
 
-	steps, task, err := h.gw.Plan(model)
+	steps, task, reason, err := h.gw.Plan(model)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error(), "internal_error")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"model":          model,
 		"detected_task":  task,
 		"chain":          steps,
 		"failover_depth": len(steps),
-	})
+	}
+	if reason != "" {
+		body["reason"] = reason
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // shareAcrossProviders takes a roughly equal number from each provider,

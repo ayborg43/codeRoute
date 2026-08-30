@@ -569,3 +569,53 @@ func TestUnkeyedProvidersAreNotProbed(t *testing.T) {
 		}
 	}
 }
+
+// An empty chain is exactly when an explanation matters most. Returning a bare
+// empty list left an operator to guess between "no keys", "marks too narrow"
+// and "everything is sidelined".
+func TestPlanExplainsAnEmptyChain(t *testing.T) {
+	g := testGateway(t, "auto", "balanced")
+
+	// Marked for chat, but the marked model has been sidelined.
+	g.catalog.SetDiscovered("openai", []provider.DiscoveredModel{
+		{Provider: "openai", Model: "only-one", PriceKnown: true},
+	})
+	g.catalog.SetTags(map[string][]routing.TaskType{
+		routing.TagKey("openai", "only-one"): {routing.TaskConversation},
+	})
+	g.benchIfAccessDenied(candidate{provider: "openai", model: "only-one"},
+		errors.New("openai returned 403: not entitled"))
+
+	// unroutable is what Plan reports as the reason; exercised directly so the
+	// test needs no database behind it.
+	keys := map[string]string{"openai": "k"}
+	if cands, _ := g.plan(req("auto:chat", "hi"), keys); len(cands) != 0 {
+		t.Fatalf("expected an empty chain, got %+v", cands)
+	}
+
+	reason := g.unroutable(req("auto:chat", "hi"), keys).Error()
+	if !strings.Contains(reason, "marked") {
+		t.Errorf("the explanation does not point at the marks:\n%s", reason)
+	}
+}
+
+// A chain that is fine carries no reason, so the field means something.
+func TestPlanOnAKeylessGatewayExplainsItself(t *testing.T) {
+	g := testGateway(t, "auto", "balanced")
+	g.catalog.SetDiscovered("openai", []provider.DiscoveredModel{
+		{Provider: "openai", Model: "works", PriceKnown: true},
+	})
+
+	// With no database there are no stored keys, so Plan reports an empty
+	// chain and says why rather than dereferencing nil.
+	steps, _, reason, err := g.Plan("auto")
+	if err != nil {
+		t.Fatalf("Plan on a keyless gateway errored: %v", err)
+	}
+	if len(steps) != 0 {
+		t.Errorf("a gateway with no keys produced a chain: %+v", steps)
+	}
+	if reason == "" {
+		t.Error("an empty chain came back with no explanation")
+	}
+}
