@@ -8,5 +8,7 @@ OpenAI-compatible API gateway (drop-in for VSCode/Cursor)
 - IoT integration (MQTT/HTTP bridge, edge inference, telemetry pipeline)
 - Lightweight self-hosted deployment on VPS via Dokploy (<50MB RAM)
 - Observability (logging, health dashboard, usage analytics)
-- Multi-tenant user management with rate limiting
+- ~~Multi-tenant user management with rate limiting~~ — withdrawn. Tenancy and
+  the per-tenant caps were removed in migration 007; a client key is now a bare
+  credential with no allowance, and the semantic cache is global.
 
