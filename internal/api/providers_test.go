@@ -9,9 +9,9 @@ import (
 	"github.com/coderouter/coderouter/internal/provider"
 )
 
-// Provider keys are the most sensitive values in the deployment, so the same
-// two rules as tenant management apply: no admin token, no endpoint.
-func TestProviderRoutesAreDisabledWithoutAToken(t *testing.T) {
+// Provider keys are the most sensitive values in the deployment, so they are
+// unreachable until something can authorize a caller.
+func TestProviderRoutesAreClosedWhenNothingCanAuthorize(t *testing.T) {
 	h := testHandler(t, "")
 
 	cases := []struct{ method, path string }{
@@ -21,8 +21,8 @@ func TestProviderRoutesAreDisabledWithoutAToken(t *testing.T) {
 	}
 	for _, tc := range cases {
 		rec := do(t, h, tc.method, tc.path, "anything", `{"api_key":"sk-live"}`)
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("%s %s = %d, want 404 when ADMIN_TOKEN is unset", tc.method, tc.path, rec.Code)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s %s = %d, want 503", tc.method, tc.path, rec.Code)
 		}
 	}
 }

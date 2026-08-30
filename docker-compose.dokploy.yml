@@ -37,8 +37,12 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       ROUTING_MODE: ${ROUTING_MODE:-auto}
       ROUTING_OBJECTIVE: ${ROUTING_OBJECTIVE:-balanced}
-      # Empty disables the key management API and the dashboard entirely.
+      # The first operator account, read only when no account exists.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      # A shared token for scripts; people sign in with the email above.
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
       CACHE_ENABLED: ${CACHE_ENABLED:-true}
       CACHE_THRESHOLD: ${CACHE_THRESHOLD:-0.95}
       CACHE_TTL: ${CACHE_TTL:-24h}

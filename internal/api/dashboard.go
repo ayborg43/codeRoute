@@ -38,11 +38,6 @@ func (h *Handler) registerDashboardRoutes(mux *http.ServeMux) {
 // dashboardAuthorized applies the admin token, and says plainly when the
 // dashboard has no token configured rather than failing as if unauthorized.
 func (h *Handler) dashboardAuthorized(w http.ResponseWriter, r *http.Request) bool {
-	if h.cfg.AdminToken == "" {
-		writeError(w, http.StatusServiceUnavailable,
-			"the dashboard API is disabled; set ADMIN_TOKEN to enable it", "invalid_request_error")
-		return false
-	}
 	return h.adminAuthorized(w, r)
 }
 

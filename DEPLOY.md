@@ -20,7 +20,8 @@ yet.
    | `ENCRYPTION_KEY` | Exactly 16, 24, or 32 bytes. `openssl rand -base64 24` |
    | `POSTGRES_PASSWORD` | Any strong value |
    | `DOMAIN` | The hostname you will serve on |
-   | `ADMIN_TOKEN` | Enables the dashboard and key management. `openssl rand -hex 32` |
+   | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | The first operator account; remove after first boot |
+   | `ADMIN_TOKEN` | Optional shared token for scripts. `openssl rand -hex 32` |
 
    A provider key is optional here — set `OPENAI_API_KEY`,
    `ANTHROPIC_API_KEY`, or `GOOGLE_API_KEY` to seed one on first boot, or add
@@ -87,9 +88,14 @@ Provider keys are verified against the provider before they are stored, so a
 mistyped key is refused there and then. They are never readable back — the
 dashboard shows a fingerprint.
 
-The dashboard asks for `ADMIN_TOKEN` and keeps it for the browser session only.
-Without `ADMIN_TOKEN` set, both the dashboard's data API and the management API
-answer with a clear "disabled" response rather than serving anything.
+The dashboard asks for an email and password. Sessions are HttpOnly cookies
+valid for 12 hours, and are marked Secure automatically when the request
+arrives over TLS — set `TRUST_PROXY_HEADERS=true` behind a proxy that
+terminates TLS, or the cookie will not be marked Secure and the sign-in
+lockout can be evaded by forging `X-Forwarded-For`.
+
+With neither an account nor an `ADMIN_TOKEN`, both APIs answer with a clear
+"not set up" response rather than serving anything.
 
 ## Operational notes
 

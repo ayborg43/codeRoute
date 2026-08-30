@@ -50,17 +50,7 @@ func liveHandlerWith(t *testing.T, adjust func(*config.Config)) (http.Handler, *
 	if err := db.Migrate(database, migrations.FS); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	// provider_keys included: a key stored under a different ENCRYPTION_KEY
-	// cannot be decrypted, and every route that loads provider keys would 500.
-	for _, stmt := range []string{
-		`TRUNCATE usage_logs`, `DELETE FROM api_keys`,
-		`DELETE FROM provider_keys`, `DELETE FROM discovered_models`,
-		`DELETE FROM model_tags`,
-	} {
-		if _, err := database.Exec(stmt); err != nil {
-			t.Fatalf("%s: %v", stmt, err)
-		}
-	}
+	truncateAll(t, database)
 
 	cfg := config.Load()
 	cfg.AdminToken = testAdminToken
@@ -472,4 +462,267 @@ func lockTestDB(t *testing.T, database *sql.DB) {
 		_, _ = conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, testDBLock)
 		conn.Close()
 	})
+}
+
+// signIn logs a test user in and returns the session cookie.
+func signIn(t *testing.T, h http.Handler, email, password string) *http.Cookie {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/login",
+		strings.NewReader(`{"email":"`+email+`","password":"`+password+`"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login = %d: %s", rec.Code, rec.Body.String())
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookie {
+			return c
+		}
+	}
+	t.Fatal("login succeeded but set no session cookie")
+	return nil
+}
+
+func withCookie(t *testing.T, h http.Handler, method, path string, c *http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequest(method, path, strings.NewReader(""))
+	if c != nil {
+		req.AddCookie(c)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestLoginGrantsAccessToTheDashboard(t *testing.T) {
+	h, database, _ := liveHandler(t)
+
+	if _, err := db.CreateUser(context.Background(), database, "op@example.com", "correct horse battery"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Before signing in, the dashboard API is closed.
+	if rec := withCookie(t, h, http.MethodGet, "/api/stats", nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated /api/stats = %d, want 401", rec.Code)
+	}
+
+	cookie := signIn(t, h, "op@example.com", "correct horse battery")
+
+	// The cookie must be unreadable by scripts and not sent cross-site.
+	if !cookie.HttpOnly {
+		t.Error("the session cookie is readable by JavaScript")
+	}
+	if cookie.SameSite != http.SameSiteLaxMode {
+		t.Errorf("SameSite = %v, want Lax", cookie.SameSite)
+	}
+	if strings.Contains(cookie.Value, "correct horse") {
+		t.Fatal("the cookie contains the password")
+	}
+
+	if rec := withCookie(t, h, http.MethodGet, "/api/stats", cookie); rec.Code != http.StatusOK {
+		t.Errorf("signed-in /api/stats = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := withCookie(t, h, http.MethodGet, "/v1/admin/keys", cookie); rec.Code != http.StatusOK {
+		t.Errorf("signed-in /v1/admin/keys = %d", rec.Code)
+	}
+
+	// /api/me names the signed-in operator.
+	rec := withCookie(t, h, http.MethodGet, "/api/me", cookie)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "op@example.com") {
+		t.Errorf("/api/me = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLogoutEndsTheSession(t *testing.T) {
+	h, database, _ := liveHandler(t)
+	if _, err := db.CreateUser(context.Background(), database, "op@example.com", "correct horse battery"); err != nil {
+		t.Fatal(err)
+	}
+
+	cookie := signIn(t, h, "op@example.com", "correct horse battery")
+	if rec := withCookie(t, h, http.MethodPost, "/api/logout", cookie); rec.Code != http.StatusOK {
+		t.Fatalf("logout = %d", rec.Code)
+	}
+
+	if rec := withCookie(t, h, http.MethodGet, "/api/stats", cookie); rec.Code != http.StatusUnauthorized {
+		t.Errorf("the session still worked after signing out: %d", rec.Code)
+	}
+}
+
+// A wrong password must not reveal whether the address has an account.
+func TestLoginDoesNotRevealWhichAccountsExist(t *testing.T) {
+	h, database, _ := liveHandler(t)
+	if _, err := db.CreateUser(context.Background(), database, "real@example.com", "correct horse battery"); err != nil {
+		t.Fatal(err)
+	}
+
+	wrong := do(t, h, http.MethodPost, "/api/login", "", `{"email":"real@example.com","password":"nope-nope-nope"}`)
+	ghost := do(t, h, http.MethodPost, "/api/login", "", `{"email":"ghost@example.com","password":"nope-nope-nope"}`)
+
+	if wrong.Code != ghost.Code {
+		t.Errorf("status codes differ: %d vs %d", wrong.Code, ghost.Code)
+	}
+	if errorMessage(t, wrong) != errorMessage(t, ghost) {
+		t.Errorf("messages differ: %q vs %q", errorMessage(t, wrong), errorMessage(t, ghost))
+	}
+}
+
+// The admin token keeps working, so scripts do not have to hold a session.
+func TestAdminTokenStillWorksAlongsideLogin(t *testing.T) {
+	h, _, _ := liveHandler(t)
+
+	if rec := do(t, h, http.MethodGet, "/api/stats", testAdminToken, ""); rec.Code != http.StatusOK {
+		t.Errorf("the admin token stopped working: %d", rec.Code)
+	}
+	if rec := do(t, h, http.MethodGet, "/api/me", testAdminToken, ""); rec.Code != http.StatusOK {
+		t.Errorf("/api/me with a token = %d", rec.Code)
+	}
+}
+
+func TestRepeatedFailuresLockTheAccountOut(t *testing.T) {
+	h, database, _ := liveHandler(t)
+	if _, err := db.CreateUser(context.Background(), database, "op@example.com", "correct horse battery"); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < maxFailedAttempts; i++ {
+		do(t, h, http.MethodPost, "/api/login", "", `{"email":"op@example.com","password":"wrong-wrong-wrong"}`)
+	}
+
+	// Even the correct password is refused while the lockout stands, which is
+	// the point: an attacker who guesses it on the sixth try still cannot use it.
+	rec := do(t, h, http.MethodPost, "/api/login", "", `{"email":"op@example.com","password":"correct horse battery"}`)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("after %d failures the login returned %d, want 429", maxFailedAttempts, rec.Code)
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Error("the lockout came with no Retry-After")
+	}
+}
+
+func TestChangingPasswordRequiresTheCurrentOne(t *testing.T) {
+	h, database, _ := liveHandler(t)
+	if _, err := db.CreateUser(context.Background(), database, "op@example.com", "correct horse battery"); err != nil {
+		t.Fatal(err)
+	}
+	cookie := signIn(t, h, "op@example.com", "correct horse battery")
+
+	post := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/password", strings.NewReader(body))
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// A borrowed session must not be enough to lock out the owner.
+	if rec := post(`{"current_password":"guessing","new_password":"a new long passphrase"}`); rec.Code != http.StatusUnauthorized {
+		t.Errorf("changed the password without the current one: %d", rec.Code)
+	}
+	if rec := post(`{"current_password":"correct horse battery","new_password":"short"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("accepted a weak new password: %d", rec.Code)
+	}
+	if rec := post(`{"current_password":"correct horse battery","new_password":"a new long passphrase"}`); rec.Code != http.StatusOK {
+		t.Fatalf("could not change the password: %d %s", rec.Code, rec.Body.String())
+	}
+
+	if _, err := db.Authenticate(context.Background(), database, "op@example.com", "a new long passphrase"); err != nil {
+		t.Errorf("the new password does not work: %v", err)
+	}
+}
+
+func TestUserManagement(t *testing.T) {
+	h, _, _ := liveHandler(t)
+
+	rec := do(t, h, http.MethodPost, "/v1/admin/users", testAdminToken,
+		`{"email":"second@example.com","password":"another long passphrase"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "password") || strings.Contains(rec.Body.String(), "hash") {
+		t.Errorf("the response leaked credential material: %s", rec.Body.String())
+	}
+
+	var created db.User
+	decode(t, rec, &created)
+
+	rec = do(t, h, http.MethodGet, "/v1/admin/users", testAdminToken, "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "second@example.com") {
+		t.Fatalf("list = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Disabling is allowed here because ADMIN_TOKEN is set, so there is
+	// another way in.
+	rec = do(t, h, http.MethodPatch, "/v1/admin/users/"+created.ID, testAdminToken, `{"disabled":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disable = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if rec := do(t, h, http.MethodPost, "/api/login", "",
+		`{"email":"second@example.com","password":"another long passphrase"}`); rec.Code != http.StatusForbidden {
+		t.Errorf("a disabled account signed in: %d", rec.Code)
+	}
+}
+
+func TestUserRoutesRequireAuthorization(t *testing.T) {
+	h, _, _ := liveHandler(t)
+
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/v1/admin/users"},
+		{http.MethodPost, "/v1/admin/users"},
+		{http.MethodPatch, "/v1/admin/users/abc"},
+	} {
+		if rec := do(t, h, tc.method, tc.path, "", `{}`); rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s unauthenticated = %d, want 401", tc.method, tc.path, rec.Code)
+		}
+	}
+}
+
+// truncateAll empties every table except the migration ledger.
+//
+// This was a hand-written list, and it went stale three times as tables were
+// added — each time producing failures that looked like real regressions but
+// were one suite treading on another's fixtures. Asking the database what
+// exists cannot go stale.
+func truncateAll(t *testing.T, database *sql.DB) {
+	t.Helper()
+
+	tables, err := publicTables(database)
+	if err != nil {
+		t.Fatalf("listing tables: %v", err)
+	}
+	if len(tables) == 0 {
+		return
+	}
+
+	// One statement with CASCADE, so foreign keys between them do not dictate
+	// an order this helper would then have to know about.
+	stmt := "TRUNCATE " + strings.Join(tables, ", ") + " RESTART IDENTITY CASCADE"
+	if _, err := database.Exec(stmt); err != nil {
+		t.Fatalf("%s: %v", stmt, err)
+	}
+}
+
+// publicTables lists what truncateAll should empty.
+func publicTables(database *sql.DB) ([]string, error) {
+	rows, err := database.Query(
+		`SELECT tablename FROM pg_tables
+		 WHERE schemaname = 'public' AND tablename <> 'schema_migrations'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		tables = append(tables, `"`+name+`"`)
+	}
+	return tables, rows.Err()
 }

@@ -13,9 +13,10 @@ OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=sk-ant-... docker compose up --build
 The gateway prints a client key once on first start; use it as the API key in
 your editor and point the base URL at `http://localhost:8080/v1`.
 
-Set `ADMIN_TOKEN` as well to get the dashboard at `http://localhost:8080/` and
-the key management API. Without it both are disabled — an unauthenticated
-key-minting surface would be worse than having no management API at all.
+Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` to create the first operator account,
+then sign in at `http://localhost:8080/`. Without an account or an
+`ADMIN_TOKEN` the dashboard and management API are unreachable — an
+unauthenticated key-minting surface would be worse than having none at all.
 
 > **No limits.** A client key authenticates and nothing more: there is no rate
 > limit and no spend cap. A leaked key means uncapped spend against your stored
@@ -36,7 +37,7 @@ key-minting surface would be worse than having no management API at all.
 
 A revoked key gets `401`. Nothing else is enforced against a caller.
 
-### Management — authenticated with `ADMIN_TOKEN`
+### Management — signed in, or holding `ADMIN_TOKEN`
 
 | Endpoint | Purpose |
 |---|---|
@@ -54,6 +55,11 @@ A revoked key gets `401`. Nothing else is enforced against a caller.
 | `GET /api/route?model=` | The chain a request would follow, without sending one |
 | `GET /api/scores?task=` | What this deployment's traffic says about each model |
 | `GET` / `PUT /v1/admin/model-tags` | Mark which models are for which kind of work |
+| `GET` / `POST /v1/admin/users` | List or create operator accounts |
+| `PATCH /v1/admin/users/{id}` | Disable an account, or set its password |
+| `POST /api/login` / `logout` | Start or end a dashboard session |
+| `GET /api/me` | Who the current session belongs to |
+| `POST /api/password` | Change your own password |
 | `GET /api/new-models` | Models that have appeared since the window began |
 | `GET` / `PUT /api/settings` | Read or change the free-only switch at runtime |
 | `GET /api/models` | Per-model traffic, paired with the routing catalogue |
@@ -73,7 +79,9 @@ A revoked key gets `401`. Nothing else is enforced against a caller.
 |---|---|---|
 | `DATABASE_URL` | local postgres | Connection string |
 | `ENCRYPTION_KEY` | committed default | AES key for stored provider keys — **change this** |
-| `ADMIN_TOKEN` | — | Enables key management and the dashboard |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | — | Creates the first operator account, if none exists |
+| `ADMIN_TOKEN` | — | Shared token for scripts; people sign in instead |
+| `TRUST_PROXY_HEADERS` | `false` | Believe `X-Forwarded-*`; only behind a proxy that sets them |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY` | — | Optional BYOK bootstrap; keys are otherwise added from the dashboard |
 
 ### Routing
@@ -110,6 +118,33 @@ A revoked key gets `401`. Nothing else is enforced against a caller.
 | `IOT_API_KEY` | — | Client key that MQTT-originated usage is attributed to |
 
 See [.env.example](.env.example) for the full list with comments.
+
+## Signing in
+
+The dashboard uses an email and password. Accounts live in Postgres with
+bcrypt-hashed passwords; a session is an HttpOnly, SameSite=Lax cookie holding
+a random token whose hash alone is stored, valid for 12 hours.
+
+`ADMIN_EMAIL` and `ADMIN_PASSWORD` create the first account, and are read
+**only when no account exists** — re-running with them set will not reset a
+password you have since changed, nor resurrect an account you disabled. Remove
+them from the environment afterwards.
+
+Further accounts are created from the management API. Disabling one ends its
+sessions immediately, and the last account that can sign in cannot be disabled
+unless an `ADMIN_TOKEN` is set, so you cannot lock yourself out with one click.
+
+`ADMIN_TOKEN` still works and is the right thing for scripts and `curl` —
+forcing automation through a login flow tends to end with an email and password
+in someone's shell history. Either credential reaches the same endpoints.
+
+Sign-in attempts are throttled per account and per source address: five wrong
+answers within fifteen minutes locks that identity out for five. Password
+checking is slow by design, which defeats offline guessing, but on its own it
+would still let an attacker tie up the server.
+
+A wrong password and an unknown address return the same status and the same
+message, so neither reveals who has an account.
 
 ## Providers
 

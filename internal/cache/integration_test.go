@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"math"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,15 +58,8 @@ func newCacheDB(t *testing.T) *sql.DB {
 		t.Skip("TEST_DATABASE_URL has no pgvector; skipping cache integration tests")
 	}
 
-	for _, stmt := range []string{
-		`DELETE FROM cache_entries`, `TRUNCATE usage_logs`,
-		`DELETE FROM api_keys`, `DELETE FROM provider_keys`,
-		`DELETE FROM discovered_models`,
-	} {
-		if _, err := database.Exec(stmt); err != nil {
-			t.Fatalf("%s: %v", stmt, err)
-		}
-	}
+	truncateAll(t, database)
+
 	return database
 }
 
@@ -242,4 +236,50 @@ func lockTestDB(t *testing.T, database *sql.DB) {
 		_, _ = conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, testDBLock)
 		conn.Close()
 	})
+}
+
+// truncateAll empties every table except the migration ledger.
+//
+// This was a hand-written list, and it went stale three times as tables were
+// added — each time producing failures that looked like real regressions but
+// were one suite treading on another's fixtures. Asking the database what
+// exists cannot go stale.
+func truncateAll(t *testing.T, database *sql.DB) {
+	t.Helper()
+
+	tables, err := publicTables(database)
+	if err != nil {
+		t.Fatalf("listing tables: %v", err)
+	}
+	if len(tables) == 0 {
+		return
+	}
+
+	// One statement with CASCADE, so foreign keys between them do not dictate
+	// an order this helper would then have to know about.
+	stmt := "TRUNCATE " + strings.Join(tables, ", ") + " RESTART IDENTITY CASCADE"
+	if _, err := database.Exec(stmt); err != nil {
+		t.Fatalf("%s: %v", stmt, err)
+	}
+}
+
+// publicTables lists what truncateAll should empty.
+func publicTables(database *sql.DB) ([]string, error) {
+	rows, err := database.Query(
+		`SELECT tablename FROM pg_tables
+		 WHERE schemaname = 'public' AND tablename <> 'schema_migrations'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		tables = append(tables, `"`+name+`"`)
+	}
+	return tables, rows.Err()
 }

@@ -45,24 +45,7 @@ func newTestDB(t *testing.T) *sql.DB {
 }
 
 func truncate(t *testing.T, database *sql.DB) {
-	t.Helper()
-
-	// provider_keys is cleared too: a key left behind by a run with a different
-	// ENCRYPTION_KEY fails to decrypt and breaks every route that loads
-	// provider keys.
-	for _, stmt := range []string{
-		`TRUNCATE usage_logs`,
-		`DELETE FROM api_keys`,
-		`DELETE FROM provider_keys`,
-		`DELETE FROM discovered_models`,
-	} {
-		if _, err := database.Exec(stmt); err != nil {
-			t.Fatalf("%s: %v", stmt, err)
-		}
-	}
-	if _, err := database.Exec(`DELETE FROM cache_entries`); err != nil {
-		t.Logf("cache_entries not present (no pgvector): %v", err)
-	}
+	truncateAll(t, database)
 }
 
 // logUsage writes a usage row directly, standing in for a completed request.
@@ -711,4 +694,250 @@ func lockTestDB(t *testing.T, database *sql.DB) {
 		_, _ = conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, testDBLock)
 		conn.Close()
 	})
+}
+
+func TestUserPasswordRoundTrip(t *testing.T) {
+	database := newTestDB(t)
+	ctx := context.Background()
+
+	u, err := CreateUser(ctx, database, "  Alice@Example.COM ", "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Addresses are normalised, so case and spacing cannot create two accounts
+	// for the same person.
+	if u.Email != "alice@example.com" {
+		t.Errorf("email stored as %q", u.Email)
+	}
+
+	if _, err := Authenticate(ctx, database, "ALICE@example.com", "correct horse battery"); err != nil {
+		t.Errorf("could not sign in with a differently-cased address: %v", err)
+	}
+	if _, err := Authenticate(ctx, database, "alice@example.com", "wrong password!!"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Errorf("wrong password gave %v", err)
+	}
+}
+
+// A wrong password and an unknown address must be indistinguishable, or anyone
+// can discover who has an account.
+func TestUnknownEmailAndWrongPasswordAreIndistinguishable(t *testing.T) {
+	database := newTestDB(t)
+	ctx := context.Background()
+
+	if _, err := CreateUser(ctx, database, "real@example.com", "correct horse battery"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, wrongPassword := Authenticate(ctx, database, "real@example.com", "not the password")
+	_, unknownEmail := Authenticate(ctx, database, "ghost@example.com", "not the password")
+
+	if !errors.Is(wrongPassword, ErrInvalidCredentials) || !errors.Is(unknownEmail, ErrInvalidCredentials) {
+		t.Fatalf("errors differ: %v vs %v", wrongPassword, unknownEmail)
+	}
+	if wrongPassword.Error() != unknownEmail.Error() {
+		t.Errorf("messages differ and reveal which addresses exist: %q vs %q",
+			wrongPassword, unknownEmail)
+	}
+}
+
+// The password is hashed, never stored as given.
+func TestPasswordIsNeverStoredInTheClear(t *testing.T) {
+	database := newTestDB(t)
+	const password = "a-very-memorable-passphrase"
+
+	if _, err := CreateUser(context.Background(), database, "a@example.com", password); err != nil {
+		t.Fatal(err)
+	}
+
+	var stored []byte
+	if err := database.QueryRow(`SELECT password_hash FROM users`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stored), password) {
+		t.Fatal("the password appears in the stored hash")
+	}
+	if !strings.HasPrefix(string(stored), "$2") {
+		t.Errorf("stored value is not a bcrypt hash: %q", string(stored)[:8])
+	}
+}
+
+func TestPasswordAndEmailValidation(t *testing.T) {
+	for _, weak := range []string{"", "short", "elevenchars"} {
+		if err := ValidatePassword(weak); err == nil {
+			t.Errorf("password %q was accepted", weak)
+		}
+	}
+	if err := ValidatePassword(strings.Repeat("x", 73)); err == nil {
+		t.Error("a password past bcrypt's 72-byte limit was accepted; it would be silently truncated")
+	}
+	if err := ValidatePassword("twelvechars!"); err != nil {
+		t.Errorf("a reasonable password was rejected: %v", err)
+	}
+
+	for _, bad := range []string{"", "nobody", "@example.com", "trailing@", "has space@example.com"} {
+		if err := ValidateEmail(bad); err == nil {
+			t.Errorf("email %q was accepted", bad)
+		}
+	}
+	if err := ValidateEmail("Someone@Example.com"); err != nil {
+		t.Errorf("a normal address was rejected: %v", err)
+	}
+}
+
+func TestSessionLifecycle(t *testing.T) {
+	database := newTestDB(t)
+	ctx := context.Background()
+
+	u, err := CreateUser(ctx, database, "a@example.com", "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	token, expires, err := CreateSession(ctx, database, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(token, "crs_") {
+		t.Errorf("session token %q is not recognisable as ours", token)
+	}
+	if time.Until(expires) > SessionLifetime+time.Minute {
+		t.Errorf("session outlives its stated lifetime")
+	}
+
+	// Only the hash is stored, so a database dump does not hand over sessions.
+	var stored []byte
+	if err := database.QueryRow(`SELECT token_hash FROM sessions`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stored), token) {
+		t.Fatal("the raw session token is in the database")
+	}
+
+	s, err := ValidateSession(ctx, database, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Email != "a@example.com" {
+		t.Errorf("session resolved to %q", s.Email)
+	}
+
+	if err := DeleteSession(ctx, database, token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateSession(ctx, database, token); !errors.Is(err, ErrNoSession) {
+		t.Errorf("a deleted session still validated: %v", err)
+	}
+}
+
+func TestExpiredSessionsAreRefusedAndPruned(t *testing.T) {
+	database := newTestDB(t)
+	ctx := context.Background()
+
+	u, _ := CreateUser(ctx, database, "a@example.com", "correct horse battery")
+	token, _, err := CreateSession(ctx, database, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := database.Exec(`UPDATE sessions SET expires_at = NOW() - INTERVAL '1 minute'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateSession(ctx, database, token); !errors.Is(err, ErrNoSession) {
+		t.Errorf("an expired session validated: %v", err)
+	}
+
+	n, err := PruneSessions(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = n // the failed validation may already have removed it
+}
+
+// Disabling an account must end its sessions, or the person stays signed in.
+func TestDisablingAUserEndsItsSessions(t *testing.T) {
+	database := newTestDB(t)
+	ctx := context.Background()
+
+	u, _ := CreateUser(ctx, database, "a@example.com", "correct horse battery")
+	token, _, err := CreateSession(ctx, database, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetUserDisabled(ctx, database, u.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ValidateSession(ctx, database, token); err == nil {
+		t.Error("a disabled user's session still validated")
+	}
+	if _, err := Authenticate(ctx, database, "a@example.com", "correct horse battery"); !errors.Is(err, ErrUserDisabled) {
+		t.Errorf("a disabled user could still sign in: %v", err)
+	}
+
+	// Re-enabling restores sign-in.
+	if err := SetUserDisabled(ctx, database, u.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Authenticate(ctx, database, "a@example.com", "correct horse battery"); err != nil {
+		t.Errorf("a re-enabled user could not sign in: %v", err)
+	}
+}
+
+func TestDuplicateEmailIsRefused(t *testing.T) {
+	database := newTestDB(t)
+	ctx := context.Background()
+
+	if _, err := CreateUser(ctx, database, "a@example.com", "correct horse battery"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateUser(ctx, database, "A@Example.com", "another good passphrase"); err == nil {
+		t.Error("the same address was accepted twice with different casing")
+	}
+}
+
+// truncateAll empties every table except the migration ledger.
+//
+// This was a hand-written list, and it went stale three times as tables were
+// added — each time producing failures that looked like real regressions but
+// were one suite treading on another's fixtures. Asking the database what
+// exists cannot go stale.
+func truncateAll(t *testing.T, database *sql.DB) {
+	t.Helper()
+
+	tables, err := publicTables(database)
+	if err != nil {
+		t.Fatalf("listing tables: %v", err)
+	}
+	if len(tables) == 0 {
+		return
+	}
+
+	// One statement with CASCADE, so foreign keys between them do not dictate
+	// an order this helper would then have to know about.
+	stmt := "TRUNCATE " + strings.Join(tables, ", ") + " RESTART IDENTITY CASCADE"
+	if _, err := database.Exec(stmt); err != nil {
+		t.Fatalf("%s: %v", stmt, err)
+	}
+}
+
+// publicTables lists what truncateAll should empty.
+func publicTables(database *sql.DB) ([]string, error) {
+	rows, err := database.Query(
+		`SELECT tablename FROM pg_tables
+		 WHERE schemaname = 'public' AND tablename <> 'schema_migrations'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		tables = append(tables, `"`+name+`"`)
+	}
+	return tables, rows.Err()
 }

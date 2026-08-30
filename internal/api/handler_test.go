@@ -73,17 +73,20 @@ func errorMessage(t *testing.T, rec *httptest.ResponseRecorder) string {
 
 // --- admin surface ----------------------------------------------------------
 
-func TestAdminRoutesAreDisabledWithoutAToken(t *testing.T) {
+// With neither an admin token nor any account, there is nothing to be
+// authorized against. Saying so beats a bare 401, which leaves an operator on
+// a fresh install with no idea what to do next.
+func TestManagementSaysWhenItIsNotSetUp(t *testing.T) {
 	h := testHandler(t, "")
 
-	// Even holding "the" token cannot reach a disabled management API.
-	for _, path := range []string{"/v1/admin/keys", "/v1/admin/providers"} {
+	for _, path := range []string{"/v1/admin/keys", "/v1/admin/providers", "/api/stats"} {
 		rec := do(t, h, http.MethodGet, path, "anything", "")
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("%s = %d, want 404 when ADMIN_TOKEN is unset", path, rec.Code)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s = %d, want 503 when nothing can authorize", path, rec.Code)
 		}
-		if !strings.Contains(errorMessage(t, rec), "ADMIN_TOKEN") {
-			t.Errorf("%s did not explain why it is disabled: %q", path, rec.Body.String())
+		msg := errorMessage(t, rec)
+		if !strings.Contains(msg, "ADMIN_EMAIL") || !strings.Contains(msg, "ADMIN_TOKEN") {
+			t.Errorf("%s does not say how to set up access: %q", path, msg)
 		}
 	}
 }
@@ -135,16 +138,13 @@ func TestAdminTokenWithoutBearerPrefixIsRejected(t *testing.T) {
 
 // --- dashboard surface ------------------------------------------------------
 
-func TestDashboardAPIIsDisabledWithoutAToken(t *testing.T) {
+func TestDashboardAPIIsClosedWhenNothingCanAuthorize(t *testing.T) {
 	h := testHandler(t, "")
 
 	for _, path := range []string{"/api/stats", "/api/usage", "/api/keys", "/api/models"} {
 		rec := do(t, h, http.MethodGet, path, "anything", "")
 		if rec.Code != http.StatusServiceUnavailable {
-			t.Errorf("%s = %d, want 503 when ADMIN_TOKEN is unset", path, rec.Code)
-		}
-		if !strings.Contains(errorMessage(t, rec), "ADMIN_TOKEN") {
-			t.Errorf("%s did not explain why it is disabled: %q", path, rec.Body.String())
+			t.Errorf("%s = %d, want 503", path, rec.Code)
 		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -46,6 +47,9 @@ func main() {
 	if err := bootstrap(database, cfg); err != nil {
 		log.Fatal(err)
 	}
+	if err := bootstrapAdminUser(database, cfg); err != nil {
+		log.Fatal(err)
+	}
 
 	catalog, err := cfg.Catalog()
 	if err != nil {
@@ -75,6 +79,7 @@ func main() {
 	}
 	gw.StartDiscovery(ctx, cfg.DiscoveryInterval)
 	gw.StartLatencyFeedback(ctx, cfg.LatencyFeedback)
+	startSessionSweeper(ctx, database)
 
 	// A runtime toggle outlives the process, so a stored override wins over
 	// the environment default — otherwise a restart would silently undo it.
@@ -154,6 +159,66 @@ func bootstrap(database *sql.DB, cfg *config.Config) error {
 	}
 
 	return nil
+}
+
+// bootstrapAdminUser creates the first operator account from the environment,
+// so a fresh deployment has a way in without a separate provisioning step.
+//
+// It only ever acts when there are no accounts at all. Re-running with the
+// variables still set must not reset a password an operator has since changed,
+// and must not resurrect an account they disabled.
+func bootstrapAdminUser(database *sql.DB, cfg *config.Config) error {
+	count, err := db.CountUsers(context.Background(), database)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	if cfg.BootstrapAdminEmail == "" || cfg.BootstrapAdminPassword == "" {
+		if cfg.AdminToken == "" {
+			log.Print("no operator accounts and no ADMIN_TOKEN; the dashboard and " +
+				"management API are unreachable. Set ADMIN_EMAIL and ADMIN_PASSWORD to " +
+				"create the first account.")
+		}
+		return nil
+	}
+
+	user, err := db.CreateUser(context.Background(), database,
+		cfg.BootstrapAdminEmail, cfg.BootstrapAdminPassword)
+	if err != nil {
+		return fmt.Errorf("creating the first operator account: %w", err)
+	}
+
+	log.Printf("created the first operator account for %s; sign in at the dashboard", user.Email)
+	log.Print("ADMIN_PASSWORD is only read when no account exists — remove it from the " +
+		"environment now that the account is created")
+	return nil
+}
+
+// startSessionSweeper clears expired sessions, so the table does not grow with
+// every sign-in that was never signed out.
+func startSessionSweeper(ctx context.Context, database *sql.DB) {
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if n, err := db.PruneSessions(ctx, database); err != nil {
+					if ctx.Err() == nil {
+						log.Printf("could not prune sessions: %v", err)
+					}
+				} else if n > 0 {
+					log.Printf("pruned %d expired session(s)", n)
+				}
+			}
+		}
+	}()
 }
 
 // buildCache assembles the semantic cache. Embeddings are billed to the stored

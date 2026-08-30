@@ -85,9 +85,22 @@ type Config struct {
 	// that has recovered is not held to yesterday's failures.
 	ObservationWindow time.Duration
 
-	// AdminToken guards client-key and provider-key management. Empty disables
-	// those endpoints entirely rather than leaving them open.
+	// AdminToken guards client-key and provider-key management, and remains
+	// the way scripts authenticate. Signing in with an email and password is
+	// the route for people; this stays for automation.
 	AdminToken string
+
+	// BootstrapAdminEmail and BootstrapAdminPassword create the first operator
+	// account on a deployment that has none, so a fresh install has a way in
+	// without a separate provisioning step.
+	BootstrapAdminEmail    string
+	BootstrapAdminPassword string
+
+	// TrustProxyHeaders makes the gateway believe X-Forwarded-For and
+	// X-Forwarded-Proto. Only enable it behind a proxy that sets them: they
+	// are trivially forged otherwise, which would let an attacker evade the
+	// sign-in lockout and make session cookies look secure when they are not.
+	TrustProxyHeaders bool
 
 	RequestTimeout  time.Duration
 	BreakerCooldown time.Duration
@@ -174,17 +187,20 @@ func Load() *Config {
 			EmbeddingModel:   getEnv("EMBEDDING_MODEL", ""),
 			EmbeddingBaseURL: os.Getenv("EMBEDDING_BASE_URL"),
 		},
-		ModelCatalog:      catalog,
-		catalogErr:        catalogErr,
-		LatencyFeedback:   getEnvDuration("LATENCY_FEEDBACK_INTERVAL", 5*time.Minute),
-		ObservationWindow: getEnvDuration("OBSERVATION_WINDOW", 6*time.Hour),
-		AdminToken:        os.Getenv("ADMIN_TOKEN"),
-		RoutingMode:       getEnv("ROUTING_MODE", "auto"),
-		RoutingObjective:  getEnv("ROUTING_OBJECTIVE", "balanced"),
-		RouterModel:       getEnv("ROUTER_MODEL", "auto"),
-		RequestTimeout:    300 * time.Second,
-		BreakerCooldown:   30 * time.Second,
-		BreakerTrip:       3,
+		ModelCatalog:           catalog,
+		catalogErr:             catalogErr,
+		LatencyFeedback:        getEnvDuration("LATENCY_FEEDBACK_INTERVAL", 5*time.Minute),
+		ObservationWindow:      getEnvDuration("OBSERVATION_WINDOW", 6*time.Hour),
+		AdminToken:             os.Getenv("ADMIN_TOKEN"),
+		BootstrapAdminEmail:    os.Getenv("ADMIN_EMAIL"),
+		BootstrapAdminPassword: os.Getenv("ADMIN_PASSWORD"),
+		TrustProxyHeaders:      getEnvBool("TRUST_PROXY_HEADERS", false),
+		RoutingMode:            getEnv("ROUTING_MODE", "auto"),
+		RoutingObjective:       getEnv("ROUTING_OBJECTIVE", "balanced"),
+		RouterModel:            getEnv("ROUTER_MODEL", "auto"),
+		RequestTimeout:         300 * time.Second,
+		BreakerCooldown:        30 * time.Second,
+		BreakerTrip:            3,
 	}
 }
 

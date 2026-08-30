@@ -227,3 +227,57 @@ func TestUsingDefaultEncryptionKey(t *testing.T) {
 		t.Error("a custom key was reported as the default")
 	}
 }
+
+// Every setting the deployment documents must actually reach the Config.
+//
+// Three separate settings have been declared as fields and then never assigned
+// in Load: the code compiled, the unit tests passed because they set fields
+// directly, and the omission only surfaced when a real deployment behaved as
+// though the variable had never been set. This walks the documented list and
+// checks each one lands somewhere.
+func TestEveryDocumentedEnvVarIsRead(t *testing.T) {
+	// value chosen per variable so the result is unambiguous when read back
+	cases := map[string]struct {
+		value string
+		check func(*Config) bool
+	}{
+		"DATABASE_URL":                  {"postgres://x/y", func(c *Config) bool { return c.DatabaseURL == "postgres://x/y" }},
+		"PORT":                          {"9999", func(c *Config) bool { return c.Port == "9999" }},
+		"ENCRYPTION_KEY":                {"0123456789abcdef", func(c *Config) bool { return string(c.EncryptionKey) == "0123456789abcdef" }},
+		"DEFAULT_MODEL":                 {"some-model", func(c *Config) bool { return c.DefaultModel == "some-model" }},
+		"ADMIN_TOKEN":                   {"tok", func(c *Config) bool { return c.AdminToken == "tok" }},
+		"ADMIN_EMAIL":                   {"a@b.com", func(c *Config) bool { return c.BootstrapAdminEmail == "a@b.com" }},
+		"ADMIN_PASSWORD":                {"a-long-passphrase", func(c *Config) bool { return c.BootstrapAdminPassword == "a-long-passphrase" }},
+		"TRUST_PROXY_HEADERS":           {"true", func(c *Config) bool { return c.TrustProxyHeaders }},
+		"ROUTING_MODE":                  {"always", func(c *Config) bool { return c.RoutingMode == "always" }},
+		"ROUTING_OBJECTIVE":             {"cost", func(c *Config) bool { return c.RoutingObjective == "cost" }},
+		"ROUTER_MODEL":                  {"pick", func(c *Config) bool { return c.RouterModel == "pick" }},
+		"ROUTING_ATTEMPTS_PER_PROVIDER": {"3", func(c *Config) bool { return c.AttemptsPerProvider == 3 }},
+		"ROUTING_MAX_ATTEMPTS":          {"11", func(c *Config) bool { return c.MaxAttempts == 11 }},
+		"FREE_ONLY":                     {"true", func(c *Config) bool { return c.FreeOnly }},
+		"DISCOVERY_INTERVAL":            {"7h", func(c *Config) bool { return c.DiscoveryInterval == 7*time.Hour }},
+		"OBSERVATION_WINDOW":            {"9h", func(c *Config) bool { return c.ObservationWindow == 9*time.Hour }},
+		"LATENCY_FEEDBACK_INTERVAL":     {"8m", func(c *Config) bool { return c.LatencyFeedback == 8*time.Minute }},
+		"CACHE_ENABLED":                 {"false", func(c *Config) bool { return !c.Cache.Enabled }},
+		"CACHE_THRESHOLD":               {"0.77", func(c *Config) bool { return c.Cache.Threshold == 0.77 }},
+		"CACHE_TTL":                     {"3h", func(c *Config) bool { return c.Cache.TTL == 3*time.Hour }},
+		"CACHE_MAX_TEMPERATURE":         {"0.42", func(c *Config) bool { return c.Cache.MaxTemperature == 0.42 }},
+		"EMBEDDING_MODEL":               {"embed-1", func(c *Config) bool { return c.Cache.EmbeddingModel == "embed-1" }},
+		"EMBEDDING_BASE_URL":            {"http://e/v1", func(c *Config) bool { return c.Cache.EmbeddingBaseURL == "http://e/v1" }},
+		"OPENAI_API_KEY":                {"sk-x", func(c *Config) bool { return c.BootstrapProviderKeys["openai"] == "sk-x" }},
+		"OPENAI_BASE_URL":               {"http://o/v1", func(c *Config) bool { return c.ProviderBaseURLs["openai"] == "http://o/v1" }},
+		"MQTT_BROKER":                   {"tcp://b:1883", func(c *Config) bool { return c.IoT.Broker == "tcp://b:1883" }},
+		"IOT_EDGE_ENDPOINT":             {"http://edge/v1", func(c *Config) bool { return c.IoT.EdgeEndpoint == "http://edge/v1" }},
+		"PROVIDERS":                     {"groq", func(c *Config) bool { return len(c.Providers) == 1 && c.Providers[0].Name == "groq" }},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, tc.value)
+			if !tc.check(Load()) {
+				t.Errorf("%s=%q was not read into the configuration — the field is "+
+					"probably declared but never assigned in Load", name, tc.value)
+			}
+		})
+	}
+}

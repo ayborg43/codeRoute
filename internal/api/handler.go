@@ -40,12 +40,17 @@ type Handler struct {
 	db     *sql.DB
 	cfg    *config.Config
 	bridge *iot.Bridge
+
+	// throttle bars an identity after repeated failed sign-ins. It is held on
+	// the handler rather than being global so tests get a fresh one.
+	throttle *loginThrottle
 }
 
 func NewHandler(gw *gateway.Gateway, database *sql.DB, cfg *config.Config, bridge *iot.Bridge) http.Handler {
-	h := &Handler{gw: gw, db: database, cfg: cfg, bridge: bridge}
+	h := &Handler{gw: gw, db: database, cfg: cfg, bridge: bridge, throttle: newLoginThrottle()}
 	mux := http.NewServeMux()
 
+	h.registerAuthRoutes(mux)
 	h.registerAdminRoutes(mux)
 	h.registerDashboardRoutes(mux)
 

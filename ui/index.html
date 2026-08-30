@@ -76,8 +76,11 @@ tbody tr:last-child td{border-bottom:none}
 .gate .mark svg{width:18px;height:18px}
 .gate p{color:var(--muted);font-size:.875rem;margin:1rem 0;line-height:1.6;text-wrap:pretty}
 .gate code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.75rem;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:.1rem .35rem}
-.gate form{display:flex;gap:.5rem;margin-top:1.25rem}
-.gate input{flex:1}
+.gate form{display:flex;flex-direction:column;gap:.6rem;margin-top:1.25rem;text-align:left}
+.gate input{width:100%}
+.gate .btn{width:100%;justify-content:center;margin-top:.25rem}
+.gate-error{color:var(--err);font-size:.8125rem;margin-top:.9rem}
+.gate-hint{color:var(--muted);font-size:.75rem;margin-top:.6rem}
 .hidden{display:none}
 .banner{background:var(--warn-soft);border:1px solid var(--warn-border);color:var(--warn-text);padding:.75rem 1rem;border-radius:var(--radius-sm);margin-bottom:1.5rem;font-size:.8125rem}
 .row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
@@ -113,14 +116,15 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-off
 <body>
 
 <div id="gate" class="gate">
-  <h1><span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg></span>CodeRouter</h1>
-  <p>This dashboard reports all traffic through the gateway and can mint keys.
-     Enter the admin token (<code>ADMIN_TOKEN</code>) to continue.</p>
+  <h1>CodeRouter</h1>
+  <p>Sign in to manage providers, keys and routing.</p>
   <form id="gate-form">
-    <input id="token-input" type="password" placeholder="Admin token" autocomplete="off" autofocus>
-    <button class="btn" type="submit">Unlock</button>
+    <input id="login-email" type="email" placeholder="Email" autocomplete="username" autofocus>
+    <input id="login-password" type="password" placeholder="Password" autocomplete="current-password">
+    <button class="btn" type="submit" id="login-button">Sign in</button>
   </form>
-  <p id="gate-error" class="status-err hidden"></p>
+  <p id="gate-error" class="gate-error hidden"></p>
+  <p id="gate-hint" class="gate-hint"></p>
 </div>
 
 <div id="app" class="hidden">
@@ -134,6 +138,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-off
       <option value="720h">Last 30 days</option>
     </select>
     <span id="health" class="muted">checking…</span>
+    <span id="whoami" class="muted" style="font-size:.75rem"></span>
     <button class="btn ghost small" id="signout">Sign out</button>
   </div>
 </nav>
@@ -281,8 +286,8 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-off
 
 <script>
 'use strict';
-const KEY = 'coderouter.admin_token';
-let token = sessionStorage.getItem(KEY) || '';
+class AuthError extends Error {}
+
 let timer = null;
 
 const $ = id => document.getElementById(id);
@@ -290,8 +295,6 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = n => '$' + Number(n || 0).toFixed(Number(n) > 0 && Number(n) < 0.01 ? 4 : 2);
 const num = n => Number(n || 0).toLocaleString();
-
-class AuthError extends Error {}
 
 // Derived from the address the operator actually reached the page on, so it is
 // right behind a reverse proxy or a custom domain without the server having to
@@ -322,36 +325,51 @@ async function copyText(text, button, sourceEl) {
   }
 }
 
+// The session lives in an HttpOnly cookie the browser sends automatically, so
+// there is no token for this page to hold — and none for a cross-site script
+// to read, which is the point.
 async function api(path, opts) {
-  const res = await fetch(path, Object.assign({headers: {
-    'Authorization': 'Bearer ' + token,
-    'Content-Type': 'application/json',
-  }}, opts || {}));
+  const res = await fetch(path, Object.assign({
+    credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'},
+  }, opts || {}));
 
-  if (res.status === 401) throw new AuthError('The admin token was rejected.');
-
+  // Read the body before deciding: a 401 from /api/login means the password
+  // was wrong, and telling that person their session expired sends them
+  // looking for a problem that is not there.
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((body.error && body.error.message) || ('HTTP ' + res.status));
+  const message = (body.error && body.error.message) || null;
+
+  if (res.status === 401) {
+    throw new AuthError(message || 'Your session has ended. Sign in again.');
+  }
+  if (!res.ok) throw new Error(message || ('HTTP ' + res.status));
   return body;
 }
 
 function showGate(message) {
   clearInterval(timer);
   timer = null;
-  token = '';
-  sessionStorage.removeItem(KEY);
   $('app').classList.add('hidden');
   $('gate').classList.remove('hidden');
+
   const err = $('gate-error');
   if (message) { err.textContent = message; err.classList.remove('hidden'); }
   else { err.classList.add('hidden'); }
-  $('token-input').value = '';
-  $('token-input').focus();
+
+  $('login-password').value = '';
+  $('login-email').focus();
 }
 
-function showApp() {
+async function showApp() {
   $('gate').classList.add('hidden');
   $('app').classList.remove('hidden');
+
+  try {
+    const me = await api('/api/me');
+    $('whoami').textContent = me.email || (me.admin_token ? 'admin token' : '');
+  } catch (e) { /* the refresh below will surface anything real */ }
+
   refresh();
   if (!timer) timer = setInterval(refresh, 30000);
 }
@@ -866,24 +884,45 @@ async function refresh() {
 
 $('gate-form').addEventListener('submit', async ev => {
   ev.preventDefault();
-  token = $('token-input').value.trim();
-  if (!token) return;
+
+  const email = $('login-email').value.trim();
+  const password = $('login-password').value;
+  if (!email || !password) {
+    showGate('Enter your email and password.');
+    return;
+  }
+
+  const button = $('login-button');
+  button.disabled = true;
+  button.textContent = 'Signing in…';
 
   try {
-    await api('/api/stats');
-    sessionStorage.setItem(KEY, token);
+    // The server sets an HttpOnly cookie; nothing sensitive comes back here.
+    await api('/api/login', {
+      method: 'POST',
+      body: JSON.stringify({email: email, password: password}),
+    });
     $('gate-error').classList.add('hidden');
-    showApp();
+    $('login-password').value = '';
+    await showApp();
   } catch (e) {
-    showGate(e instanceof AuthError ? e.message : e.message);
+    // AuthError is the ordinary wrong-password case; anything else is worth
+    // showing verbatim, since it may be a lockout or a setup problem.
+    showGate(e.message);
   }
+
+  button.disabled = false;
+  button.textContent = 'Sign in';
 });
 
 $('base-url').textContent = baseURL();
 $('copy-base-url').addEventListener('click', ev =>
   copyText(baseURL(), ev.currentTarget, $('base-url')));
 
-$('signout').addEventListener('click', () => showGate(''));
+$('signout').addEventListener('click', async () => {
+  try { await api('/api/logout', {method: 'POST'}); } catch (e) { /* sign out locally regardless */ }
+  showGate('');
+});
 $('window').addEventListener('change', refresh);
 $('create-key').addEventListener('click', createKey);
 $('free-only-view').addEventListener('change', () => loadCatalogue().catch(handle));
@@ -894,8 +933,19 @@ $('model-filter').addEventListener('input', renderCatalogue);
 $('rediscover').addEventListener('click', ev => rediscover(ev.currentTarget));
 $('new-key-name').addEventListener('keydown', ev => { if (ev.key === 'Enter') createKey(); });
 
-loadHealth();
-if (token) showApp(); else showGate('');
+// Whether a session exists is the server's business, not this page's: ask.
+(async () => {
+  loadHealth();
+  try {
+    const me = await api('/api/me');
+    $('whoami').textContent = me.email || (me.admin_token ? 'admin token' : '');
+    await showApp();
+  } catch (e) {
+    showGate('');
+    // Say plainly when there is nothing to sign in to yet.
+    if (!(e instanceof AuthError)) $('gate-hint').textContent = e.message;
+  }
+})();
 </script>
 </body>
 </html>
