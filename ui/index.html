@@ -46,7 +46,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica N
 .nav h1{font-family:'Outfit',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:1.125rem;font-weight:700;letter-spacing:-.01em;color:var(--text);display:flex;align-items:center;gap:.55rem}
 .mark{display:inline-flex;align-items:center;justify-content:center;flex:none;width:26px;height:26px;border-radius:7px;background:var(--accent);color:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)}
 .mark svg{width:14px;height:14px}
-.nav-right{display:flex;align-items:center;gap:.75rem;font-size:.875rem}
+.nav-right{display:flex;align-items:center;flex-wrap:wrap;gap:.75rem;font-size:.875rem}
 .container{max-width:1200px;margin:2rem auto;padding:0 2rem}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1.25rem;margin-bottom:1.75rem}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;box-shadow:var(--shadow-sm)}
@@ -82,7 +82,7 @@ th,td{text-align:left;padding:.6rem .75rem;border-bottom:1px solid var(--border)
 th{position:sticky;top:0;z-index:1;background:var(--surface);border-bottom:none;box-shadow:inset 0 -1px 0 var(--border);color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;font-size:.6875rem}
 tbody tr:hover td{background:var(--surface-2)}
 tbody tr:last-child td{border-bottom:none}
-.scroll{overflow-x:auto;border-radius:var(--radius-sm)}
+.scroll{overflow-x:auto;overscroll-behavior-x:contain;border-radius:var(--radius-sm)}
 .status-ok{color:var(--ok);font-weight:500}
 .status-err{color:var(--err);font-weight:500}
 .status-warn{color:var(--warn);font-weight:500}
@@ -138,15 +138,59 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
 .err-modal-body{margin:0;padding:1rem 1.1rem;white-space:pre-wrap;word-break:break-word;font-size:.8125rem;line-height:1.6;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--err-deep);max-height:60vh;overflow-y:auto}
 .err-modal-actions{padding:0 1.1rem 1.1rem;display:flex;justify-content:flex-end}
 .pager{display:flex;align-items:center;gap:.6rem;margin-top:.85rem;font-size:.8125rem;color:var(--muted)}
+.live-head{display:flex;align-items:center;gap:.85rem;flex-wrap:wrap}
+.live-dot{flex:none;width:10px;height:10px;border-radius:50%;background:var(--faint)}
+.live-who{flex:1 1 12rem;min-width:0}
+.live-dot.on{background:var(--ok);animation:live-pulse 1.6s ease-in-out infinite}
+.live-dot.err{background:var(--err)}
+@keyframes live-pulse{0%,100%{box-shadow:0 0 0 0 var(--ok-soft)}50%{box-shadow:0 0 0 7px var(--ok-soft)}}
+.live-model{font-size:1.35rem;font-weight:700;letter-spacing:-.01em;word-break:break-all;line-height:1.25}
+.live-sub{font-size:.75rem;color:var(--muted);margin-top:.25rem}
+.live-extra{margin-left:auto;display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
+.live-next{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin-top:1rem;padding-top:.9rem;border-top:1px solid var(--border);font-size:.75rem;color:var(--muted)}
+.live-next .label{font-size:.6875rem;text-transform:uppercase;letter-spacing:.07em;font-weight:600}
+.live-next select{font-size:.75rem;padding:.3rem 1.8rem .3rem .6rem}
+.chain{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap}
+.hop{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.6875rem;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:.15rem .45rem;color:var(--text-2)}
+.hop.head{background:var(--accent-soft);border-color:var(--accent-border);color:var(--accent)}
+.hop.sidelined{opacity:.6;text-decoration:line-through}
+.hop-arrow{color:var(--faint)}
 .pager .btn[disabled]{opacity:.45;cursor:default;pointer-events:none}
 @media (max-width:640px){
-  .nav{padding:.75rem 1rem}
+  .nav{padding:.75rem 1rem;gap:.6rem}
+  .nav h1{font-size:1rem}
+  /* The controls take a row of their own, so they never have to share the
+     width with the title — which is what pushed the sign-out button off the
+     side of the screen and took the whole page into horizontal scroll. */
+  .nav-right{width:100%;gap:.5rem}
+  /* Sign out keeps its place beside the controls; the account line drops
+     below them rather than pushing the button onto a third row of a nav bar
+     that is already sticky and eating the top of the screen. */
+  #signout{order:2;margin-left:auto}
+  #whoami{order:3;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .container{margin:1.25rem auto;padding:0 1rem}
   .card{padding:1.15rem}
   .grid{gap:1rem}
+  .stat{font-size:1.875rem}
   .field{grid-template-columns:1fr auto}
   .field .label{grid-column:1/-1}
   .endpoint .note{margin-left:0;width:100%}
+  /* 16px is the threshold below which iOS Safari zooms the page in when a
+     field takes focus, leaving the operator scrolled sideways across a page
+     that otherwise fit. Bigger buttons are for thumbs. */
+  input,select,textarea{font-size:16px}
+  .btn{padding:.6rem 1rem}
+  .btn.small{padding:.45rem .8rem;font-size:.8125rem}
+  #pg-model{min-width:0;width:100%}
+  .gate{margin:2.5rem 1rem;padding:1.75rem 1.35rem}
+  .live-next select{font-size:16px;padding:.45rem 1.9rem .45rem .7rem}
+  /* Thumb-sized: the mark buttons and the free-only box are otherwise around
+     20px, which is a miss as often as a hit. */
+  .tagbtn{padding:.35rem .6rem;font-size:.75rem}
+  .check input{width:18px;height:18px}
+  .live-model{font-size:1.15rem}
+  .live-extra{width:100%;margin-left:0}
+  #live-routing{margin-left:0!important}
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{transition:none!important;animation:none!important}
@@ -191,6 +235,24 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
     <code id="base-url">&nbsp;</code>
     <button class="btn ghost small" id="copy-base-url">Copy</button>
     <span class="note">Point your editor here and use a client key below as the API key.</span>
+  </div>
+
+  <div class="card" style="margin-bottom:1.5rem">
+    <h2>In use now</h2>
+    <div class="live-head">
+      <span class="live-dot" id="live-dot" aria-hidden="true"></span>
+      <div class="live-who">
+        <div class="live-model mono" id="live-model">&hellip;</div>
+        <div class="live-sub" id="live-sub">&nbsp;</div>
+      </div>
+      <div class="live-extra" id="live-extra"></div>
+    </div>
+    <div class="live-next">
+      <span class="label">Next request</span>
+      <select id="live-pick"></select>
+      <span class="chain" id="live-chain"></span>
+      <span id="live-routing" style="margin-left:auto"></span>
+    </div>
   </div>
 
   <div class="card" style="margin-bottom:1.5rem">
@@ -384,6 +446,7 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
 class AuthError extends Error {}
 
 let timer = null;
+let liveTimer = null;
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
@@ -470,7 +533,8 @@ async function api(path, opts) {
 
 function showGate(message) {
   clearInterval(timer);
-  timer = null;
+  clearInterval(liveTimer);
+  timer = liveTimer = null;
   $('app').classList.add('hidden');
   $('gate').classList.remove('hidden');
 
@@ -493,6 +557,10 @@ async function showApp() {
 
   refresh();
   if (!timer) timer = setInterval(refresh, 30000);
+  // The status card is the one view that goes stale in seconds rather than
+  // minutes, so it polls on its own timer — far more often than the rest of
+  // the page, and far more cheaply.
+  if (!liveTimer) liveTimer = setInterval(() => loadActive().catch(handle), 5000);
 }
 
 function banner(text) {
@@ -518,6 +586,121 @@ $('error-modal').addEventListener('click', e => {
 });
 
 const win = () => $('window').value;
+
+// The card at the top answers "which model is this actually using", which no
+// other view does: routing chooses per request, so the answer is not in the
+// configuration, and the usage log only gains a row once a call has finished.
+// liveModel is the model whose chain the card plans; empty means the server's
+// own default.
+let liveModel = '';
+
+// duration renders a call length the way someone reading a status light wants
+// it: milliseconds while that is meaningful, seconds once it is not.
+const duration = ms => Number(ms) < 1000 ? Math.round(ms) + 'ms' : (ms / 1000).toFixed(1) + 's';
+
+function ago(ms) {
+  const s = Math.round(Number(ms) / 1000);
+  if (s < 5) return 'just now';
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.round(s / 60) + 'm ago';
+  if (s < 86400) return Math.round(s / 3600) + 'h ago';
+  return Math.round(s / 86400) + 'd ago';
+}
+
+const pill = (text, cls) => '<span class="pill' + (cls ? ' ' + cls : '') + '">' + esc(text) + '</span>';
+
+// renderChain draws the failover order as hops. A step routing would skip is
+// struck through rather than dropped: "it would try this but cannot" is the
+// thing an operator is looking for when a chain is shorter than expected.
+function renderChain(next) {
+  const el = $('live-chain');
+  const steps = (next && next.chain) || [];
+
+  if (!steps.length) {
+    const why = (next && next.reason) || 'nothing to route to';
+    el.innerHTML = '<span class="status-warn">' + esc(why) + '</span>';
+    return;
+  }
+
+  const shown = steps.slice(0, 4);
+  el.innerHTML = shown.map((step, i) => {
+    const off = step.benched || step.provider_in_cooldown;
+    const cls = 'hop' + (off ? ' sidelined' : i === 0 ? ' head' : '');
+    const why = !off ? ''
+      : ' title="' + esc(step.benched
+          ? 'this account cannot use this model'
+          : 'provider in cooldown after repeated failures') + '"';
+    return (i ? '<span class="hop-arrow">&rarr;</span>' : '') +
+      '<span class="' + cls + '"' + why + '>' + esc(step.provider) + '/' + esc(step.model) + '</span>';
+  }).join('') +
+    (steps.length > shown.length
+      ? '<span class="hop-arrow">&rarr;</span><span>' + (steps.length - shown.length) + ' more</span>'
+      : '');
+}
+
+// renderPicker leaves the dropdown alone unless its options have actually
+// changed — rebuilding it on every poll would fight an operator mid-choice.
+function renderPicker(routing, selected) {
+  const el = $('live-pick');
+  const choices = (routing && routing.choices) || [];
+  const same = el.options.length === choices.length &&
+    choices.every((c, i) => el.options[i].value === c);
+
+  if (!same) {
+    el.innerHTML = choices.map(c => '<option value="' + esc(c) + '">' + esc(c) + '</option>').join('');
+  }
+  if (selected && el.value !== selected) el.value = selected;
+}
+
+async function loadActive() {
+  const d = await api('/api/active' + (liveModel ? '?model=' + encodeURIComponent(liveModel) : ''));
+
+  const active = d.active || [];
+  const last = d.last;
+  const dot = $('live-dot'), name = $('live-model'), sub = $('live-sub'), extra = $('live-extra');
+
+  if (active.length) {
+    const call = active[0];
+    dot.className = 'live-dot on';
+    name.textContent = call.model;
+    sub.textContent = call.provider + ' · answering now · ' + duration(call.elapsed_ms);
+    extra.innerHTML =
+      (call.requested && call.requested !== call.model ? pill('asked for ' + call.requested) : '') +
+      (call.task ? pill(call.task) : '') +
+      (call.streaming ? pill('streaming') : '') +
+      (active.length > 1 ? pill(active.length - 1 + ' more in flight') : '');
+  } else if (last) {
+    const failed = last.status === 'error';
+    dot.className = 'live-dot' + (failed ? ' err' : '');
+    name.textContent = last.model;
+    sub.textContent = (last.cache_hit ? 'served from cache' : last.provider) +
+      ' · ' + duration(last.latency_ms) + ' · ' + ago(last.ago_ms);
+    extra.innerHTML =
+      (last.requested && last.requested !== last.model ? pill('asked for ' + last.requested) : '') +
+      (last.task ? pill(last.task) : '') +
+      (last.cache_hit ? pill('cache hit', 'hit') : '') +
+      (failed
+        ? '<button type="button" class="err-link status-err" id="live-failure">failed</button>'
+        : pill('idle'));
+
+    if (failed) {
+      $('live-failure').addEventListener('click', () =>
+        showErrorDetail(last.provider + ' (' + last.model + ')', last.failure));
+    }
+  } else {
+    dot.className = 'live-dot';
+    name.textContent = '—';
+    sub.textContent = 'No request has reached the gateway since it started.';
+    extra.innerHTML = '';
+  }
+
+  renderPicker(d.routing, d.next && d.next.model);
+  renderChain(d.next);
+
+  const r = d.routing || {};
+  $('live-routing').textContent =
+    'routing: ' + (r.mode || '?') + (r.free_only ? ' · free models only' : '');
+}
 
 async function loadStats() {
   const d = await api('/api/stats?window=' + encodeURIComponent(win()));
@@ -1240,7 +1423,7 @@ async function refresh() {
   loadHealth();
   try {
     banner('');
-    await Promise.all([loadStats(), loadSettings(), loadProviders(), loadCatalogue(), loadPlaygroundModels(),
+    await Promise.all([loadActive(), loadStats(), loadSettings(), loadProviders(), loadCatalogue(), loadPlaygroundModels(),
                        loadScores(), loadNewModels(), loadBlacklist(), loadKeys(), loadModels(), loadUsage()]);
   } catch (e) { handle(e); }
 }
@@ -1292,6 +1475,10 @@ $('free-only-view').addEventListener('change', () => { cataloguePage = 1; loadCa
 $('provider-filter').addEventListener('change', () => { cataloguePage = 1; loadCatalogue().catch(handle); });
 $('free-only-toggle').addEventListener('click', ev => toggleFreeOnly(ev.currentTarget));
 $('score-task').addEventListener('change', () => loadScores().catch(handle));
+$('live-pick').addEventListener('change', ev => {
+  liveModel = ev.currentTarget.value;
+  loadActive().catch(handle);
+});
 $('pg-send').addEventListener('click', ev => runPlayground(ev.currentTarget));
 // Ctrl/Cmd+Enter sends, so a long prompt does not need a trip to the mouse.
 $('pg-prompt').addEventListener('keydown', ev => {

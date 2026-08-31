@@ -55,6 +55,7 @@ A revoked key gets `401`. Nothing else is enforced against a caller.
 | `POST /api/probe` | Send a trial completion to each candidate model now |
 | `GET /api/probes` | What the last sweep found |
 | `GET /api/route?model=` | The chain a request would follow, without sending one |
+| `GET /api/active` | Which model is answering now, which answered last, and what the next request would reach for |
 | `GET /api/scores?task=` | What this deployment's traffic says about each model |
 | `GET` / `PUT /v1/admin/model-tags` | Mark which models are for which kind of work |
 | `GET` / `POST /v1/admin/users` | List or create operator accounts |

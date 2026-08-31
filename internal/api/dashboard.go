@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/coderouter/coderouter/internal/db"
+	"github.com/coderouter/coderouter/internal/gateway"
 	"github.com/coderouter/coderouter/internal/routing"
 	"github.com/coderouter/coderouter/ui"
 )
@@ -31,6 +32,7 @@ func (h *Handler) registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/probe", h.dashboardProbe)
 	mux.HandleFunc("GET /api/probes", h.dashboardProbes)
 	mux.HandleFunc("GET /api/route", h.dashboardRoute)
+	mux.HandleFunc("GET /api/active", h.dashboardActive)
 	mux.HandleFunc("GET /api/new-models", h.dashboardNewModels)
 	mux.HandleFunc("GET /api/scores", h.dashboardScores)
 	h.registerPlaygroundRoutes(mux)
@@ -505,6 +507,77 @@ func (h *Handler) dashboardRoute(w http.ResponseWriter, r *http.Request) {
 		body["reason"] = reason
 	}
 	writeJSON(w, http.StatusOK, body)
+}
+
+// dashboardActive answers "which model is this using", which the rest of the
+// dashboard only answers in aggregate. Routing picks a model per request, so
+// it is not something an operator can read off the configuration, and the
+// usage log is written after a call finishes — the request someone opened the
+// dashboard to watch is exactly the one missing from it.
+//
+// The chain is included alongside because "which model" has two answers worth
+// having: the one that just served, and the one the next request would reach
+// for.
+func (h *Handler) dashboardActive(w http.ResponseWriter, r *http.Request) {
+	if !h.dashboardAuthorized(w, r) {
+		return
+	}
+
+	live := h.gw.Live()
+
+	body := map[string]any{
+		"active": live.Active,
+		"routing": map[string]any{
+			"mode":          h.cfg.RoutingMode,
+			"objective":     h.cfg.RoutingObjective,
+			"default_model": h.cfg.DefaultModel,
+			"router_model":  h.cfg.RouterModel,
+			"free_only":     h.gw.FreeOnly(),
+			"choices":       routableChoices(h.cfg.DefaultModel),
+		},
+	}
+	if live.Last != nil {
+		body["last"] = live.Last
+	}
+
+	model := r.URL.Query().Get("model")
+	if model == "" {
+		model = h.cfg.DefaultModel
+	}
+
+	// A chain the gateway cannot compute — stored keys that will not decrypt,
+	// say — is not worth failing the whole view over: what is answering now is
+	// still worth showing, and the provider table says why the keys are bad.
+	steps, task, reason, err := h.gw.Plan(model)
+	next := map[string]any{"model": model}
+	if err != nil {
+		next["reason"] = err.Error()
+	} else {
+		next["chain"], next["detected_task"] = steps, task
+		if reason != "" {
+			next["reason"] = reason
+		}
+	}
+	body["next"] = next
+
+	writeJSON(w, http.StatusOK, body)
+}
+
+// routableChoices lists what the status view offers to plan a chain for: the
+// model an unnamed request falls back to, plus every routing alias. Anything
+// else a caller might name is in the catalogue, which is far too long for a
+// dropdown on a status card.
+func routableChoices(defaultModel string) []string {
+	choices := []string{}
+	seen := map[string]bool{}
+	for _, name := range append([]string{defaultModel}, gateway.Sentinels()...) {
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		choices = append(choices, name)
+	}
+	return choices
 }
 
 // shareAcrossProviders takes a roughly equal number from each provider,
