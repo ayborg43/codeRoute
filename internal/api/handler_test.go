@@ -177,6 +177,75 @@ func TestDashboardAPIRejectsWrongMethods(t *testing.T) {
 	}
 }
 
+// The status view answers "which model is this using right now". On a gateway
+// that has served nothing it must still say what the next request would reach
+// for, rather than going blank.
+func TestActiveReportsRoutingEvenBeforeAnyTraffic(t *testing.T) {
+	h := testHandler(t, testAdminToken)
+
+	rec := do(t, h, http.MethodGet, "/api/active", testAdminToken, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/active = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Active  []map[string]any `json:"active"`
+		Last    map[string]any   `json:"last"`
+		Routing struct {
+			Mode         string   `json:"mode"`
+			DefaultModel string   `json:"default_model"`
+			Choices      []string `json:"choices"`
+		} `json:"routing"`
+		Next struct {
+			Model  string           `json:"model"`
+			Chain  []map[string]any `json:"chain"`
+			Reason string           `json:"reason"`
+		} `json:"next"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response was not the expected shape: %v (%s)", err, rec.Body.String())
+	}
+
+	if len(body.Active) != 0 || body.Last != nil {
+		t.Errorf("a gateway that has served nothing reported traffic: %s", rec.Body.String())
+	}
+	if body.Routing.Mode == "" || body.Routing.DefaultModel == "" {
+		t.Errorf("routing was not described: %s", rec.Body.String())
+	}
+	if body.Next.Model != body.Routing.DefaultModel {
+		t.Errorf("next model = %q, want the default %q", body.Next.Model, body.Routing.DefaultModel)
+	}
+	// With no provider keys stored there is nothing to route to, and saying
+	// why beats an empty chain the operator has to interpret.
+	if len(body.Next.Chain) != 0 && body.Next.Reason == "" {
+		t.Error("an empty chain came back with no explanation")
+	}
+
+	// The picker offers the routing aliases, so an operator can ask what
+	// "auto" would do without typing a model name.
+	var hasAuto bool
+	for _, c := range body.Routing.Choices {
+		if c == "auto" {
+			hasAuto = true
+		}
+	}
+	if !hasAuto {
+		t.Errorf("routing choices do not include auto: %v", body.Routing.Choices)
+	}
+}
+
+// It reads all the traffic through the gateway, so it is guarded like the rest
+// of the data API.
+func TestActiveIsClosedToUnauthenticatedCallers(t *testing.T) {
+	h := testHandler(t, testAdminToken)
+
+	for _, token := range []string{"", "wrong"} {
+		if rec := do(t, h, http.MethodGet, "/api/active", token, ""); rec.Code != http.StatusUnauthorized {
+			t.Errorf("GET /api/active with token %q = %d, want 401", token, rec.Code)
+		}
+	}
+}
+
 func TestRootServesTheDashboardPage(t *testing.T) {
 	rec := do(t, testHandler(t, testAdminToken), http.MethodGet, "/", "", "")
 
@@ -208,6 +277,17 @@ func TestRootServesTheDashboardPage(t *testing.T) {
 	}
 	if !strings.Contains(body, "window.location.origin + '/v1'") {
 		t.Error("the base URL is not derived from the address the page was reached on")
+	}
+
+	// Without the viewport meta a phone lays the page out at desktop width and
+	// scales it down, which no amount of responsive CSS can recover from.
+	if !strings.Contains(body, `name="viewport"`) {
+		t.Error("the page does not declare a viewport, so it will not lay out on a phone")
+	}
+	// The status card is what answers "which model is this using"; without it
+	// the page never asks.
+	if !strings.Contains(body, "/api/active") {
+		t.Error("the page does not poll for which model is in use")
 	}
 }
 

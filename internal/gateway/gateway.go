@@ -44,6 +44,10 @@ type Gateway struct {
 	mu       sync.Mutex
 	breakers map[string]*breaker
 
+	// live is what the dashboard's status view reads: the attempts in flight
+	// and the last one to finish.
+	live *liveState
+
 	// benchMu guards models an account has been refused access to. The
 	// circuit breaker works per provider, which is the wrong grain here: an
 	// aggregator serves many models and an account is typically entitled to
@@ -94,6 +98,7 @@ func New(database *sql.DB, opts Options) (*Gateway, error) {
 		client:   &http.Client{Timeout: opts.Config.RequestTimeout},
 		breakers: make(map[string]*breaker),
 		bench:    make(map[string]time.Time),
+		live:     newLiveState(),
 	}
 	gw.freeOnlyFlag.Store(opts.Config.FreeOnly)
 	return gw, nil
@@ -257,10 +262,13 @@ func (g *Gateway) attemptChain(
 		}
 
 		start := time.Now()
+		live := g.live.begin(c, req.Model, task, emit != nil)
 		resp, usage, err := g.attempt(ctx, c.provider, &attempt, apiKey, wrapped)
 		latency := time.Since(start)
 
 		if err != nil {
+			g.live.end(live, "error", err.Error(), latency)
+
 			// The circuit breaker is about provider health — timeouts, 5xx,
 			// a vendor having a bad day. A model this account may not use, or
 			// that cannot do chat, says nothing about the provider, and
@@ -283,6 +291,7 @@ func (g *Gateway) attemptChain(
 			continue
 		}
 
+		g.live.end(live, "success", "", latency)
 		g.recordSuccess(c.provider)
 		g.logUsage(usageRecord{key: key, cand: c, latency: latency, usage: usage, status: "success", task: task})
 

@@ -114,14 +114,18 @@ func (g *Gateway) serveFromCache(ctx context.Context, req *provider.ChatRequest,
 		return nil, false
 	}
 
+	latency := time.Since(start)
+	task := routing.DetectTask(lastUserPrompt(req))
+
 	g.logUsage(usageRecord{
 		key:      key,
 		cand:     candidate{provider: cacheProvider, model: model},
-		latency:  time.Since(start),
+		latency:  latency,
 		status:   "success",
-		task:     routing.DetectTask(lastUserPrompt(req)),
+		task:     task,
 		cacheHit: true,
 	})
+	g.live.servedFromCache(req.Model, model, task, latency)
 
 	resp := cachedResponse(model, content)
 
