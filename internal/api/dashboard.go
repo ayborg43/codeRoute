@@ -215,10 +215,11 @@ func (h *Handler) dashboardCatalogue(w http.ResponseWriter, r *http.Request) {
 		}
 
 		entry := map[string]any{
-			"model":    p.Model,
-			"provider": p.Provider,
-			"free":     p.Free(),
-			"tasks":    names,
+			"model":       p.Model,
+			"provider":    p.Provider,
+			"free":        p.Free(),
+			"tasks":       names,
+			"blacklisted": catalogue.Blacklisted(p.Provider, p.Model),
 		}
 		if p.PriceKnown {
 			entry["input_cost_per_1m"] = p.InputCostPer1M

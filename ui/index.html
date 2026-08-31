@@ -269,8 +269,8 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
     </div>
     <div class="scroll">
       <table>
-        <thead><tr><th>Model</th><th>Provider</th><th>Works</th><th>Input $/1M</th><th>Output $/1M</th><th>Use for</th></tr></thead>
-        <tbody id="catalogue"><tr><td colspan="6" class="muted">Loading&hellip;</td></tr></tbody>
+        <thead><tr><th>Model</th><th>Provider</th><th>Works</th><th>Input $/1M</th><th>Output $/1M</th><th>Use for</th><th>Routing</th></tr></thead>
+        <tbody id="catalogue"><tr><td colspan="7" class="muted">Loading&hellip;</td></tr></tbody>
       </table>
     </div>
     <div class="pager" id="catalogue-pager"></div>
@@ -306,6 +306,22 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
       <table>
         <thead><tr><th>Model</th><th>Provider</th><th>First seen</th></tr></thead>
         <tbody id="new-models"><tr><td colspan="3" class="muted">Loading&hellip;</td></tr></tbody>
+      </table>
+    </div>
+    <div class="pager" id="new-models-pager"></div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem">
+    <h2>Blacklisted Models</h2>
+    <p class="hint">Models an operator has forbidden routing from choosing.
+       This is a veto, not a preference &mdash; unlike an unmarked model, a
+       blacklisted one is refused even when a request names it directly.
+       Blacklist a model from the Available Models table above; restore it
+       here.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Model</th><th>Provider</th><th>Blacklisted since</th><th></th></tr></thead>
+        <tbody id="blacklist"><tr><td colspan="4" class="muted">Loading&hellip;</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -669,6 +685,10 @@ const MODELS_PAGE_SIZE = 15;
 let usageOffset = 0;
 const USAGE_PAGE_SIZE = 50;
 
+let newModelsRows = [];
+let newModelsPage = 1;
+const NEW_MODELS_PAGE_SIZE = 15;
+
 async function loadSettings() {
   const d = await api('/api/settings');
   freeOnly = !!d.free_only;
@@ -744,7 +764,7 @@ function renderCatalogue() {
 
   const tb = $('catalogue');
   if (!filtered.length) {
-    tb.innerHTML = '<tr><td colspan="4" class="muted">' +
+    tb.innerHTML = '<tr><td colspan="7" class="muted">' +
       (catalogueRows.length ? 'Nothing matches that filter' : 'No models') + '</td></tr>';
     $('catalogue-pager').innerHTML = '';
     return;
@@ -779,18 +799,26 @@ function renderCatalogue() {
             '" data-title="' + esc(m.model + ' via ' + m.provider) + '">no <span aria-hidden="true">&#9432;</span></button>'
           : '<span class="status-err">no</span>';
 
-    return '<tr><td class="mono">' + esc(m.model) + '</td>' +
+    const blacklistBtn = '<button type="button" class="btn ghost small' +
+      (m.blacklisted ? ' danger' : '') + '" data-blacklist-provider="' + esc(m.provider) +
+      '" data-blacklist-model="' + esc(m.model) + '" data-blacklisted="' + (m.blacklisted ? '1' : '0') + '">' +
+      (m.blacklisted ? 'Blacklisted' : 'Blacklist') + '</button>';
+
+    return '<tr' + (m.blacklisted ? ' class="muted"' : '') + '><td class="mono">' + esc(m.model) + '</td>' +
       '<td>' + esc(m.provider) + '</td>' +
       '<td>' + works + '</td>' +
       '<td>' + price(m.input_cost_per_1m) + '</td>' +
       '<td>' + price(m.output_cost_per_1m) + '</td>' +
-      '<td>' + buttons + '</td></tr>';
+      '<td>' + buttons + '</td>' +
+      '<td>' + blacklistBtn + '</td></tr>';
   }).join('');
 
   tb.querySelectorAll('[data-tag-task]').forEach(b =>
     b.addEventListener('click', () => toggleTag(b)));
   tb.querySelectorAll('[data-failure]').forEach(b =>
     b.addEventListener('click', () => showErrorDetail(b.dataset.title, b.dataset.failure)));
+  tb.querySelectorAll('[data-blacklist-model]').forEach(b =>
+    b.addEventListener('click', () => toggleBlacklist(b)));
 }
 
 // toggleTag flips one mark on one model. The whole tag set for that model is
@@ -817,6 +845,26 @@ async function toggleTag(button) {
     row.tasks = [...tasks];
     button.classList.toggle('on', tasks.has(task));
     await loadCatalogue();
+  } catch (e) { handle(e); }
+  button.disabled = false;
+}
+
+// toggleBlacklist adds or removes one model from the routing blacklist. A
+// blacklisted model is never chosen, automatically or by name — unlike a tag,
+// which only steers automatic routing.
+async function toggleBlacklist(button) {
+  const provider = button.dataset.blacklistProvider;
+  const model = button.dataset.blacklistModel;
+  const blacklisted = button.dataset.blacklisted === '1';
+
+  button.disabled = true;
+  try {
+    banner('');
+    await api('/v1/admin/model-blacklist', {
+      method: blacklisted ? 'DELETE' : 'POST',
+      body: JSON.stringify({provider: provider, model: model}),
+    });
+    await Promise.all([loadCatalogue(), loadBlacklist()]);
   } catch (e) { handle(e); }
   button.disabled = false;
 }
@@ -897,13 +945,21 @@ async function loadScores() {
 
 async function loadNewModels() {
   const d = await api('/api/new-models?window=' + encodeURIComponent(win()));
-  const rows = d.data || [];
-  const tb = $('new-models');
+  newModelsRows = d.data || [];
+  renderNewModels();
+}
 
-  if (!rows.length) {
+function renderNewModels() {
+  const tb = $('new-models');
+  if (!newModelsRows.length) {
     tb.innerHTML = '<tr><td colspan="3" class="muted">Nothing new in this window</td></tr>';
+    $('new-models-pager').innerHTML = '';
     return;
   }
+
+  const {page, totalPages, slice: rows} = pageOf(newModelsRows, newModelsPage, NEW_MODELS_PAGE_SIZE);
+  newModelsPage = page;
+  renderPager('new-models-pager', page, totalPages, p => { newModelsPage = p; renderNewModels(); });
 
   tb.innerHTML = rows.map(m =>
     '<tr><td class="mono">' + esc(m.model) +
@@ -1009,6 +1065,40 @@ async function loadKeys() {
   tb.querySelectorAll('[data-revoke]').forEach(b =>
     b.addEventListener('click', () =>
       revokeKey(b.getAttribute('data-revoke'), b.getAttribute('data-name'))));
+}
+
+async function loadBlacklist() {
+  const d = await api('/v1/admin/model-blacklist');
+  const rows = d.data || [];
+  const tb = $('blacklist');
+
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="4" class="muted">No models are blacklisted</td></tr>'; return; }
+
+  tb.innerHTML = rows.map(m =>
+    '<tr><td class="mono">' + esc(m.model) + '</td>' +
+    '<td>' + esc(m.provider) + '</td>' +
+    '<td class="muted">' + when(m.created_at) + '</td>' +
+    '<td><button class="btn ghost small" data-restore-provider="' + esc(m.provider) +
+      '" data-restore-model="' + esc(m.model) + '">Restore</button></td></tr>').join('');
+
+  tb.querySelectorAll('[data-restore-model]').forEach(b =>
+    b.addEventListener('click', () => restoreModel(b)));
+}
+
+// restoreModel un-blacklists one model, so routing may choose it again.
+async function restoreModel(button) {
+  const provider = button.dataset.restoreProvider;
+  const model = button.dataset.restoreModel;
+
+  button.disabled = true;
+  try {
+    banner('');
+    await api('/v1/admin/model-blacklist', {
+      method: 'DELETE',
+      body: JSON.stringify({provider: provider, model: model}),
+    });
+    await Promise.all([loadBlacklist(), loadCatalogue()]);
+  } catch (e) { handle(e); button.disabled = false; }
 }
 
 // A never-used key has a null timestamp.
@@ -1151,7 +1241,7 @@ async function refresh() {
   try {
     banner('');
     await Promise.all([loadStats(), loadSettings(), loadProviders(), loadCatalogue(), loadPlaygroundModels(),
-                       loadScores(), loadNewModels(), loadKeys(), loadModels(), loadUsage()]);
+                       loadScores(), loadNewModels(), loadBlacklist(), loadKeys(), loadModels(), loadUsage()]);
   } catch (e) { handle(e); }
 }
 
@@ -1196,7 +1286,7 @@ $('signout').addEventListener('click', async () => {
   try { await api('/api/logout', {method: 'POST'}); } catch (e) { /* sign out locally regardless */ }
   showGate('');
 });
-$('window').addEventListener('change', () => { modelsPage = 1; refresh(); });
+$('window').addEventListener('change', () => { modelsPage = 1; newModelsPage = 1; refresh(); });
 $('create-key').addEventListener('click', createKey);
 $('free-only-view').addEventListener('change', () => { cataloguePage = 1; loadCatalogue().catch(handle); });
 $('provider-filter').addEventListener('change', () => { cataloguePage = 1; loadCatalogue().catch(handle); });

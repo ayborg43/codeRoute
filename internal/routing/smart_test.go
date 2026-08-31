@@ -19,6 +19,35 @@ func TestDetectTask(t *testing.T) {
 	}
 }
 
+func TestBlacklistIsClearedByReplacement(t *testing.T) {
+	c := NewCatalog()
+
+	c.SetBlacklist(map[string]bool{TagKey("p", "banned"): true})
+	if !c.Blacklisted("p", "banned") {
+		t.Fatal("model was not recorded as blacklisted")
+	}
+	if c.Blacklisted("p", "other") {
+		t.Error("an unrelated model was reported as blacklisted")
+	}
+	if got := c.BlacklistCount(); got != 1 {
+		t.Errorf("BlacklistCount() = %d, want 1", got)
+	}
+
+	// A false entry must not linger as if it were true, and a wholesale
+	// replacement with an empty map must clear everything — the dashboard
+	// sends exactly what should now be blacklisted, not a delta.
+	c.SetBlacklist(map[string]bool{TagKey("p", "banned"): false})
+	if c.Blacklisted("p", "banned") {
+		t.Error("a false entry left the model blacklisted")
+	}
+
+	c.SetBlacklist(map[string]bool{TagKey("p", "banned"): true})
+	c.SetBlacklist(map[string]bool{})
+	if c.Blacklisted("p", "banned") || c.BlacklistCount() != 0 {
+		t.Error("replacing with an empty blacklist did not clear the previous one")
+	}
+}
+
 func TestRankHonoursObjective(t *testing.T) {
 	c := NewCatalog()
 

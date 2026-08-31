@@ -129,6 +129,11 @@ type Catalog struct {
 	// named, price it, and supply the free-only pool. A provider reporting
 	// four hundred models must not drown six hand-tuned ones.
 	discovered map[string][]ModelProfile
+
+	// blacklist holds models an operator has forbidden routing from choosing,
+	// keyed provider/model. Unlike tags and confirmation this is a veto: it
+	// applies even to a request that names the model directly.
+	blacklist map[string]bool
 }
 
 // NewCatalog returns the built-in catalogue.
@@ -143,6 +148,7 @@ func NewCatalog() *Catalog {
 		discovered: map[string][]ModelProfile{},
 		tags:       map[string][]TaskType{},
 		confirmed:  map[string]bool{},
+		blacklist:  map[string]bool{},
 	}
 }
 
@@ -636,6 +642,35 @@ func (c *Catalog) AnyConfirmed() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.confirmed) > 0
+}
+
+// SetBlacklist replaces the operator's routing exclusions wholesale, matching
+// SetModelTags: what is shown on the dashboard is exactly what is stored.
+func (c *Catalog) SetBlacklist(blacklist map[string]bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.blacklist = make(map[string]bool, len(blacklist))
+	for k, v := range blacklist {
+		if v {
+			c.blacklist[k] = true
+		}
+	}
+}
+
+// Blacklisted reports whether an operator has forbidden routing from
+// choosing this model.
+func (c *Catalog) Blacklisted(providerName, model string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.blacklist[TagKey(providerName, model)]
+}
+
+// BlacklistCount reports how many models are currently blacklisted.
+func (c *Catalog) BlacklistCount() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.blacklist)
 }
 
 // PreferConfirmed reorders a pool so models shown to work come first.

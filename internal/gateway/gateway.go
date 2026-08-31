@@ -445,9 +445,29 @@ func Sentinels() []string {
 }
 
 // plan builds the ordered provider chain for a request and reports the task
-// smart routing detected for it. keys says which providers can actually be
-// reached, so a candidate is never proposed that has no credential.
+// smart routing detected for it, with anything an operator has blacklisted
+// removed. The exclusion applies here rather than in each candidate-producing
+// path below so it covers all of them uniformly, including a request that
+// names a blacklisted model directly — a blacklist is a veto, not a ranking
+// signal automatic routing alone would respect.
 func (g *Gateway) plan(req *provider.ChatRequest, keys map[string]string) ([]candidate, routing.TaskType) {
+	cands, task := g.planCandidates(req, keys)
+	return g.excludeBlacklisted(cands), task
+}
+
+// excludeBlacklisted drops any candidate an operator has forbidden routing
+// from choosing.
+func (g *Gateway) excludeBlacklisted(in []candidate) []candidate {
+	out := make([]candidate, 0, len(in))
+	for _, c := range in {
+		if !g.catalog.Blacklisted(c.provider, c.model) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func (g *Gateway) planCandidates(req *provider.ChatRequest, keys map[string]string) ([]candidate, routing.TaskType) {
 	task := routing.DetectTask(lastUserPrompt(req))
 
 	if g.freeOnly(req.Model) {
@@ -1283,6 +1303,25 @@ func (g *Gateway) LoadModelTags(ctx context.Context) error {
 		for task, n := range counts {
 			log.Printf("routing: %d model(s) marked for %s; only those will serve it", n, task)
 		}
+	}
+	return nil
+}
+
+// LoadBlacklist reads the operator's routing exclusions into the catalogue.
+func (g *Gateway) LoadBlacklist(ctx context.Context) error {
+	stored, err := db.ListBlacklistedModels(ctx, g.db)
+	if err != nil {
+		return err
+	}
+
+	blacklist := make(map[string]bool, len(stored))
+	for _, m := range stored {
+		blacklist[routing.TagKey(m.Provider, m.Model)] = true
+	}
+	g.catalog.SetBlacklist(blacklist)
+
+	if n := g.catalog.BlacklistCount(); n > 0 {
+		log.Printf("routing: %d model(s) blacklisted; routing will never choose them", n)
 	}
 	return nil
 }
