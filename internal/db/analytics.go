@@ -79,10 +79,17 @@ type UsageEntry struct {
 	Failure string `json:"failure,omitempty"`
 }
 
-// RecentUsage lists the latest calls, newest first.
-func RecentUsage(ctx context.Context, database *sql.DB, limit int) ([]UsageEntry, error) {
-	if limit <= 0 || limit > 500 {
+// RecentUsage lists calls newest first, offset back from the most recent one
+// — page 2 of the dashboard's activity table is offset by one page size, not
+// a new query.
+func RecentUsage(ctx context.Context, database *sql.DB, limit, offset int) ([]UsageEntry, error) {
+	// 501 rather than 500: the dashboard asks for one extra row past its page
+	// size to learn whether another page follows.
+	if limit <= 0 || limit > 501 {
 		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
 	}
 
 	rows, err := database.QueryContext(ctx,
@@ -93,8 +100,8 @@ func RecentUsage(ctx context.Context, database *sql.DB, limit int) ([]UsageEntry
 		 FROM usage_logs u
 		 LEFT JOIN api_keys k ON k.id = u.api_key_id
 		 ORDER BY u.created_at DESC
-		 LIMIT $1`,
-		limit,
+		 LIMIT $1 OFFSET $2`,
+		limit, offset,
 	)
 	if err != nil {
 		return nil, err

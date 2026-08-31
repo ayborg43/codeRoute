@@ -3,9 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="color-scheme" content="light">
+<meta name="color-scheme" content="light dark">
 <meta name="description" content="Operator dashboard for the CodeRouter gateway — traffic, spend, provider keys and client keys.">
 <title>CodeRouter Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232563eb' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m16 3 4 4-4 4'/%3E%3Cpath d='M20 7H4'/%3E%3Cpath d='m8 21-4-4 4-4'/%3E%3Cpath d='M4 17h16'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
 :root{
   --bg:#f5f7fa;--surface:#fff;--surface-2:#f8fafc;
@@ -18,19 +22,35 @@
   --shadow-sm:0 1px 2px rgba(15,23,42,.05);
   --shadow-md:0 1px 2px rgba(15,23,42,.05),0 12px 32px -16px rgba(15,23,42,.18);
   --radius:12px;--radius-sm:8px;
-  color-scheme:light;
+  --glow:rgba(37,99,235,.07);--nav-bg:rgba(255,255,255,.82);
+  color-scheme:light dark;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0a0e16;--surface:#141b2a;--surface-2:#1a2233;
+    --border:#232c3f;--border-strong:#33405a;--hover-border:#43526f;
+    --text:#e7eaf1;--text-2:#c1c9d6;--muted:#8b96a8;--faint:#5b6577;
+    --accent:#3b82f6;--accent-hover:#60a5fa;--accent-soft:rgba(59,130,246,.14);--accent-border:rgba(59,130,246,.4);
+    --ok:#22c55e;--ok-deep:#4ade80;--ok-soft:rgba(34,197,94,.13);--ok-border:rgba(34,197,94,.4);
+    --warn:#f59e0b;--warn-text:#fbbf24;--warn-soft:rgba(245,158,11,.13);--warn-border:rgba(245,158,11,.4);
+    --err:#f87171;--err-deep:#fca5a5;--err-soft:rgba(248,113,113,.13);--err-border:rgba(248,113,113,.4);
+    --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+    --shadow-md:0 1px 2px rgba(0,0,0,.4),0 12px 32px -16px rgba(0,0,0,.7);
+    --glow:rgba(59,130,246,.14);--nav-bg:rgba(10,14,22,.78);
+  }
 }
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:var(--bg);background-image:radial-gradient(1100px 420px at 50% -200px,rgba(37,99,235,.07),transparent 70%);background-repeat:no-repeat;color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased}
-::selection{background:rgba(37,99,235,.16)}
-.nav{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.82);-webkit-backdrop-filter:blur(12px) saturate(1.5);backdrop-filter:blur(12px) saturate(1.5);padding:.9rem 2rem;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);gap:1rem;flex-wrap:wrap}
-.nav h1{font-size:1.0625rem;font-weight:700;letter-spacing:-.01em;color:var(--text);display:flex;align-items:center;gap:.55rem}
-.mark{display:inline-flex;align-items:center;justify-content:center;flex:none;width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 1px 2px rgba(29,78,216,.35)}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:var(--bg);background-image:radial-gradient(1100px 420px at 50% -200px,var(--glow),transparent 70%);background-repeat:no-repeat;background-attachment:fixed;color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased}
+::selection{background:var(--accent-soft)}
+.nav{position:sticky;top:0;z-index:20;background:var(--nav-bg);-webkit-backdrop-filter:blur(12px) saturate(1.5);backdrop-filter:blur(12px) saturate(1.5);padding:.9rem 2rem;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);gap:1rem;flex-wrap:wrap}
+.nav h1{font-family:'Outfit',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:1.125rem;font-weight:700;letter-spacing:-.01em;color:var(--text);display:flex;align-items:center;gap:.55rem}
+.mark{display:inline-flex;align-items:center;justify-content:center;flex:none;width:26px;height:26px;border-radius:7px;background:var(--accent);color:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)}
 .mark svg{width:14px;height:14px}
 .nav-right{display:flex;align-items:center;gap:.75rem;font-size:.875rem}
 .container{max-width:1200px;margin:2rem auto;padding:0 2rem}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1.25rem;margin-bottom:1.75rem}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;box-shadow:var(--shadow-sm)}
+.grid .card{border-color:var(--surface)}
 .card h2{font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:1rem}
 .stat{font-size:2.25rem;font-weight:700;letter-spacing:-.02em;line-height:1.15;color:var(--text);font-variant-numeric:tabular-nums}
 .stat-label{font-size:.75rem;color:var(--muted);margin-top:.4rem}
@@ -67,11 +87,11 @@ tbody tr:last-child td{border-bottom:none}
 .status-err{color:var(--err);font-weight:500}
 .status-warn{color:var(--warn);font-weight:500}
 .muted{color:var(--muted)}
-.pill{display:inline-block;padding:.15rem .55rem;border-radius:999px;font-size:.6875rem;font-weight:500;background:#f1f5f9;border:1px solid var(--border);color:var(--text-2)}
+.pill{display:inline-block;padding:.15rem .55rem;border-radius:5px;font-size:.6875rem;font-weight:500;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2)}
 .pill.hit{background:var(--ok-soft);border-color:var(--ok-border);color:var(--ok-deep)}
-.free-pill{display:inline-block;padding:.1rem .45rem;border-radius:999px;font-size:.6875rem;font-weight:500;background:var(--ok-soft);border:1px solid var(--ok-border);color:var(--ok-deep)}
+.free-pill{display:inline-block;padding:.1rem .45rem;border-radius:5px;font-size:.6875rem;font-weight:500;background:var(--ok-soft);border:1px solid var(--ok-border);color:var(--ok-deep)}
 .gate{max-width:430px;margin:5rem auto;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:2.5rem 2.25rem;box-shadow:var(--shadow-md)}
-.gate h1{font-size:1.25rem;font-weight:700;letter-spacing:-.01em;color:var(--text);display:flex;align-items:center;justify-content:center;gap:.6rem}
+.gate h1{font-family:'Outfit',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:1.3rem;font-weight:700;letter-spacing:-.01em;color:var(--text);display:flex;align-items:center;justify-content:center;gap:.6rem}
 .gate .mark{width:34px;height:34px;border-radius:9px}
 .gate .mark svg{width:18px;height:18px}
 .gate p{color:var(--muted);font-size:.875rem;margin:1rem 0;line-height:1.6;text-wrap:pretty}
@@ -98,14 +118,27 @@ textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(
 .pg-meta strong{color:var(--text);font-weight:600}
 .pg-body{padding:.85rem;white-space:pre-wrap;word-break:break-word;font-size:.875rem;line-height:1.6;max-height:26rem;overflow-y:auto}
 .pg-error{padding:.85rem;white-space:pre-wrap;font-size:.8125rem;color:var(--err);line-height:1.6}
-.btn.on{background:var(--ok-deep);border-color:var(--ok-deep);color:#fff}
-.btn.on:hover{background:#14532d;border-color:#14532d}
+.btn.on{background:var(--ok);border-color:var(--ok);color:#fff}
+.btn.on:hover{filter:brightness(.88)}
 a.console{color:var(--accent);text-decoration:none;font-size:.75rem;font-weight:500}
 a.console:hover{text-decoration:underline}
-.tagbtn{background:#334155;color:#94a3b8;border:none;border-radius:.3rem;padding:.2rem .5rem;font-size:.6875rem;cursor:pointer;margin-right:.25rem}
-.tagbtn:hover{background:#475569;color:#e2e8f0}
-.tagbtn.on{background:#14532d;color:#86efac}
+.tagbtn{background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);border-radius:.3rem;padding:.2rem .5rem;font-size:.6875rem;cursor:pointer;margin-right:.25rem;transition:background .15s ease,border-color .15s ease,color .15s ease}
+.tagbtn:hover{background:var(--surface);border-color:var(--hover-border);color:var(--text)}
+.tagbtn.on{background:var(--ok-soft);border-color:var(--ok-border);color:var(--ok-deep)}
 button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.err-link{background:none;border:none;padding:0;margin:0;font:inherit;color:inherit;cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}
+.err-link:hover{text-decoration-style:solid}
+dialog.err-modal{border:none;border-radius:var(--radius);padding:0;background:var(--surface);color:var(--text);box-shadow:var(--shadow-md);max-width:34rem;width:calc(100% - 2rem)}
+dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px)}
+@media (prefers-color-scheme:dark){dialog.err-modal::backdrop{background:rgba(0,0,0,.6)}}
+.err-modal-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.9rem 1.1rem;border-bottom:1px solid var(--border)}
+.err-modal-head h3{font-size:.9375rem;font-weight:700;word-break:break-word}
+.err-modal-close{background:none;border:none;color:var(--muted);font-size:1.35rem;line-height:1;cursor:pointer;padding:.1rem .3rem;border-radius:6px}
+.err-modal-close:hover{color:var(--text);background:var(--surface-2)}
+.err-modal-body{margin:0;padding:1rem 1.1rem;white-space:pre-wrap;word-break:break-word;font-size:.8125rem;line-height:1.6;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--err-deep);max-height:60vh;overflow-y:auto}
+.err-modal-actions{padding:0 1.1rem 1.1rem;display:flex;justify-content:flex-end}
+.pager{display:flex;align-items:center;gap:.6rem;margin-top:.85rem;font-size:.8125rem;color:var(--muted)}
+.pager .btn[disabled]{opacity:.45;cursor:default;pointer-events:none}
 @media (max-width:640px){
   .nav{padding:.75rem 1rem}
   .container{margin:1.25rem auto;padding:0 1rem}
@@ -216,6 +249,8 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-off
        counts as free only when its provider publishes a zero price &mdash;
        an unpriced model is never assumed free, which is what keeps
        <code>auto:free</code> from quietly spending money.<br>
+       <strong>Confirmed</strong> means a trial completion succeeded recently,
+       so routing reaches for it first. Unchecked is not the same as broken.<br>
        <strong>Use for</strong> marks a model for a kind of work. Once any
        model is marked for a task, <code>auto:code</code> or
        <code>auto:chat</code> will use <em>only</em> the marked ones &mdash; a
@@ -229,14 +264,16 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-off
       <select id="provider-filter"><option value="">All providers</option></select>
       <input id="model-filter" placeholder="Filter by name" style="width:200px">
       <button class="btn ghost small" id="rediscover">Refresh from providers</button>
+      <button class="btn ghost small" id="probe">Check which work</button>
       <span id="catalogue-summary" class="muted" style="font-size:.75rem"></span>
     </div>
-    <div class="scroll" style="max-height:22rem;overflow-y:auto">
+    <div class="scroll">
       <table>
-        <thead><tr><th>Model</th><th>Provider</th><th>Input $/1M</th><th>Output $/1M</th><th>Use for</th></tr></thead>
-        <tbody id="catalogue"><tr><td colspan="5" class="muted">Loading&hellip;</td></tr></tbody>
+        <thead><tr><th>Model</th><th>Provider</th><th>Works</th><th>Input $/1M</th><th>Output $/1M</th><th>Use for</th></tr></thead>
+        <tbody id="catalogue"><tr><td colspan="6" class="muted">Loading&hellip;</td></tr></tbody>
       </table>
     </div>
+    <div class="pager" id="catalogue-pager"></div>
   </div>
 
   <div class="card" style="margin-top:1.5rem">
@@ -299,6 +336,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-off
         <tbody id="models"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
       </table>
     </div>
+    <div class="pager" id="models-pager"></div>
   </div>
 
   <div class="card" style="margin-top:1.5rem">
@@ -309,9 +347,21 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-off
         <tbody id="usage"><tr><td colspan="9" class="muted">Loading…</td></tr></tbody>
       </table>
     </div>
+    <div class="pager" id="usage-pager"></div>
   </div>
 </div>
 </div>
+
+<dialog id="error-modal" class="err-modal">
+  <div class="err-modal-head">
+    <h3 id="error-modal-title">Error details</h3>
+    <button type="button" class="err-modal-close" id="error-modal-close" aria-label="Close">&times;</button>
+  </div>
+  <pre id="error-modal-body" class="err-modal-body"></pre>
+  <div class="err-modal-actions">
+    <button type="button" class="btn ghost small" id="error-modal-copy">Copy</button>
+  </div>
+</dialog>
 
 <script>
 'use strict';
@@ -324,6 +374,32 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = n => '$' + Number(n || 0).toFixed(Number(n) > 0 && Number(n) < 0.01 ? 4 : 2);
 const num = n => Number(n || 0).toLocaleString();
+
+// pageOf slices an already-fetched array for client-side pagination, clamping
+// the requested page rather than trusting it — a stale page number left over
+// from a longer, unfiltered view should not render an empty table.
+function pageOf(rows, page, pageSize) {
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  page = Math.min(Math.max(1, page), totalPages);
+  const start = (page - 1) * pageSize;
+  return {page, totalPages, slice: rows.slice(start, start + pageSize)};
+}
+
+// renderPager draws Prev/Next + "page X of Y" into a container and wires the
+// clicks to onChange. hasNext overrides the totalPages-derived check, for a
+// server-paged list that doesn't know its own total.
+function renderPager(id, page, totalPages, onChange, hasNext) {
+  const el = $(id);
+  if (totalPages <= 1 && hasNext === undefined) { el.innerHTML = ''; return; }
+
+  const next = hasNext === undefined ? page < totalPages : hasNext;
+  el.innerHTML =
+    '<button type="button" class="btn ghost small" id="' + id + '-prev"' + (page <= 1 ? ' disabled' : '') + '>Prev</button>' +
+    '<span>Page ' + page + (totalPages ? ' of ' + totalPages : '') + '</span>' +
+    '<button type="button" class="btn ghost small" id="' + id + '-next"' + (next ? '' : ' disabled') + '>Next</button>';
+  $(id + '-prev').addEventListener('click', () => onChange(page - 1));
+  $(id + '-next').addEventListener('click', () => onChange(page + 1));
+}
 
 // Derived from the address the operator actually reached the page on, so it is
 // right behind a reverse proxy or a custom domain without the server having to
@@ -409,6 +485,21 @@ function banner(text) {
   el.textContent = text;
   el.classList.remove('hidden');
 }
+
+// showErrorDetail opens a modal with the full failure text for a row whose
+// table cell only has room for a status word — hovering a title attribute
+// doesn't work on touch, and truncated text isn't selectable.
+function showErrorDetail(title, text) {
+  $('error-modal-title').textContent = title || 'Error details';
+  $('error-modal-body').textContent = text || '(no details)';
+  $('error-modal').showModal();
+}
+
+$('error-modal-close').addEventListener('click', () => $('error-modal').close());
+$('error-modal-copy').addEventListener('click', e => copyText($('error-modal-body').textContent, e.target));
+$('error-modal').addEventListener('click', e => {
+  if (e.target === $('error-modal')) $('error-modal').close();
+});
 
 const win = () => $('window').value;
 
@@ -566,7 +657,17 @@ async function removeProviderKey(name) {
 }
 
 let catalogueRows = [];
+let cataloguePage = 1;
+const CATALOGUE_PAGE_SIZE = 20;
 let freeOnly = false;
+
+let modelsRows = [];
+let modelsCatalogue = {};
+let modelsPage = 1;
+const MODELS_PAGE_SIZE = 15;
+
+let usageOffset = 0;
+const USAGE_PAGE_SIZE = 50;
 
 async function loadSettings() {
   const d = await api('/api/settings');
@@ -636,17 +737,22 @@ async function loadCatalogue() {
 
 function renderCatalogue() {
   const needle = $('model-filter').value.trim().toLowerCase();
-  const rows = needle
+  const filtered = needle
     ? catalogueRows.filter(m => m.model.toLowerCase().includes(needle) ||
                                 m.provider.toLowerCase().includes(needle))
     : catalogueRows;
 
   const tb = $('catalogue');
-  if (!rows.length) {
+  if (!filtered.length) {
     tb.innerHTML = '<tr><td colspan="4" class="muted">' +
       (catalogueRows.length ? 'Nothing matches that filter' : 'No models') + '</td></tr>';
+    $('catalogue-pager').innerHTML = '';
     return;
   }
+
+  const {page, totalPages, slice: rows} = pageOf(filtered, cataloguePage, CATALOGUE_PAGE_SIZE);
+  cataloguePage = page;
+  renderPager('catalogue-pager', page, totalPages, p => { cataloguePage = p; renderCatalogue(); });
 
   const price = v => v === undefined || v === null
     ? '<span class="muted">unpriced</span>'
@@ -662,8 +768,20 @@ function renderCatalogue() {
       '" data-tag-provider="' + esc(m.provider) + '" data-tag-model="' + esc(m.model) +
       '" data-tag-task="' + task + '">' + label + '</button>').join('');
 
+    // "not checked" is deliberately not styled as a failure: a model nobody
+    // has probed is unknown, not broken.
+    const works = m.probe === undefined
+      ? '<span class="muted">not checked</span>'
+      : m.probe
+        ? '<span class="status-ok">yes</span>'
+        : m.probe_failure
+          ? '<button type="button" class="err-link status-err" data-failure="' + esc(m.probe_failure) +
+            '" data-title="' + esc(m.model + ' via ' + m.provider) + '">no <span aria-hidden="true">&#9432;</span></button>'
+          : '<span class="status-err">no</span>';
+
     return '<tr><td class="mono">' + esc(m.model) + '</td>' +
       '<td>' + esc(m.provider) + '</td>' +
+      '<td>' + works + '</td>' +
       '<td>' + price(m.input_cost_per_1m) + '</td>' +
       '<td>' + price(m.output_cost_per_1m) + '</td>' +
       '<td>' + buttons + '</td></tr>';
@@ -671,6 +789,8 @@ function renderCatalogue() {
 
   tb.querySelectorAll('[data-tag-task]').forEach(b =>
     b.addEventListener('click', () => toggleTag(b)));
+  tb.querySelectorAll('[data-failure]').forEach(b =>
+    b.addEventListener('click', () => showErrorDetail(b.dataset.title, b.dataset.failure)));
 }
 
 // toggleTag flips one mark on one model. The whole tag set for that model is
@@ -698,6 +818,25 @@ async function toggleTag(button) {
     button.classList.toggle('on', tasks.has(task));
     await loadCatalogue();
   } catch (e) { handle(e); }
+  button.disabled = false;
+}
+
+// A sweep sends one tiny completion per candidate model, so it takes a few
+// seconds and the button has to say so rather than looking stuck.
+async function runProbe(button) {
+  const label = button.textContent;
+  button.textContent = 'Checking…';
+  button.disabled = true;
+  try {
+    banner('');
+    const d = await api('/api/probe', {method: 'POST'});
+    await loadCatalogue();
+    $('catalogue-summary').textContent =
+      d.checked === 0
+        ? 'nothing to check — add a provider key first'
+        : num(d.working) + ' of ' + num(d.checked) + ' models answered (' + esc(d.duration) + ')';
+  } catch (e) { handle(e); }
+  button.textContent = label;
   button.disabled = false;
 }
 
@@ -925,15 +1064,26 @@ async function revokeKey(id, name) {
 
 async function loadModels() {
   const d = await api('/api/models?window=' + encodeURIComponent(win()));
-  const usage = d.usage || [];
-  const cat = {};
-  (d.catalogue || []).forEach(c => { cat[c.model] = c; });
+  modelsRows = d.usage || [];
+  modelsCatalogue = {};
+  (d.catalogue || []).forEach(c => { modelsCatalogue[c.model] = c; });
+  renderModels();
+}
 
+function renderModels() {
   const tb = $('models');
-  if (!usage.length) { tb.innerHTML = '<tr><td colspan="6" class="muted">No traffic in this window</td></tr>'; return; }
+  if (!modelsRows.length) {
+    tb.innerHTML = '<tr><td colspan="6" class="muted">No traffic in this window</td></tr>';
+    $('models-pager').innerHTML = '';
+    return;
+  }
 
-  tb.innerHTML = usage.map(m => {
-    const c = cat[m.model];
+  const {page, totalPages, slice: rows} = pageOf(modelsRows, modelsPage, MODELS_PAGE_SIZE);
+  modelsPage = page;
+  renderPager('models-pager', page, totalPages, p => { modelsPage = p; renderModels(); });
+
+  tb.innerHTML = rows.map(m => {
+    const c = modelsCatalogue[m.model];
     // A cache replay never touched the model, so the catalogue's estimate for
     // it says nothing; show what the replay actually cost in time.
     let latency = Math.round(m.latency_ms) + 'ms';
@@ -948,11 +1098,25 @@ async function loadModels() {
 }
 
 async function loadUsage() {
-  const d = await api('/api/usage?limit=50');
+  const d = await api('/api/usage?limit=' + USAGE_PAGE_SIZE + '&offset=' + usageOffset);
   const rows = d.data || [];
   const tb = $('usage');
 
-  if (!rows.length) { tb.innerHTML = '<tr><td colspan="10" class="muted">No usage data yet</td></tr>'; return; }
+  const page = usageOffset / USAGE_PAGE_SIZE + 1;
+  if (page === 1 && !d.has_more) {
+    $('usage-pager').innerHTML = '';
+  } else {
+    renderPager('usage-pager', page, 0, p => {
+      usageOffset = (p - 1) * USAGE_PAGE_SIZE;
+      loadUsage().catch(handle);
+    }, !!d.has_more);
+  }
+
+  if (!rows.length) {
+    tb.innerHTML = '<tr><td colspan="10" class="muted">' +
+      (usageOffset ? 'No more activity' : 'No usage data yet') + '</td></tr>';
+    return;
+  }
 
   tb.innerHTML = rows.map(u => '<tr>' +
     '<td>' + new Date(u.created_at).toLocaleString() + '</td>' +
@@ -964,10 +1128,17 @@ async function loadUsage() {
     '<td>' + num(u.tokens_out) + '</td>' +
     '<td>' + num(u.latency_ms) + 'ms</td>' +
     '<td>' + money(u.cost_usd) + '</td>' +
-    '<td class="' + (u.status === 'success' ? 'status-ok' : 'status-err') + '"' +
-      (u.failure ? ' title="' + esc(u.failure) + '"' : '') + '>' + esc(u.status) +
-      (u.failure ? ' <span class="muted">ⓘ</span>' : '') + '</td>' +
+    '<td class="' + (u.status === 'success' ? 'status-ok' : 'status-err') + '">' +
+      (u.failure
+        ? '<button type="button" class="err-link" data-failure="' + esc(u.failure) +
+          '" data-title="' + esc(u.model + ' via ' + u.provider) + '">' + esc(u.status) +
+          ' <span aria-hidden="true">ⓘ</span></button>'
+        : esc(u.status)) +
+    '</td>' +
     '</tr>').join('');
+
+  tb.querySelectorAll('[data-failure]').forEach(b =>
+    b.addEventListener('click', () => showErrorDetail(b.dataset.title, b.dataset.failure)));
 }
 
 function handle(err) {
@@ -1025,10 +1196,10 @@ $('signout').addEventListener('click', async () => {
   try { await api('/api/logout', {method: 'POST'}); } catch (e) { /* sign out locally regardless */ }
   showGate('');
 });
-$('window').addEventListener('change', refresh);
+$('window').addEventListener('change', () => { modelsPage = 1; refresh(); });
 $('create-key').addEventListener('click', createKey);
-$('free-only-view').addEventListener('change', () => loadCatalogue().catch(handle));
-$('provider-filter').addEventListener('change', () => loadCatalogue().catch(handle));
+$('free-only-view').addEventListener('change', () => { cataloguePage = 1; loadCatalogue().catch(handle); });
+$('provider-filter').addEventListener('change', () => { cataloguePage = 1; loadCatalogue().catch(handle); });
 $('free-only-toggle').addEventListener('click', ev => toggleFreeOnly(ev.currentTarget));
 $('score-task').addEventListener('change', () => loadScores().catch(handle));
 $('pg-send').addEventListener('click', ev => runPlayground(ev.currentTarget));
@@ -1036,8 +1207,9 @@ $('pg-send').addEventListener('click', ev => runPlayground(ev.currentTarget));
 $('pg-prompt').addEventListener('keydown', ev => {
   if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') $('pg-send').click();
 });
-$('model-filter').addEventListener('input', renderCatalogue);
+$('model-filter').addEventListener('input', () => { cataloguePage = 1; renderCatalogue(); });
 $('rediscover').addEventListener('click', ev => rediscover(ev.currentTarget));
+$('probe').addEventListener('click', ev => runProbe(ev.currentTarget));
 $('new-key-name').addEventListener('keydown', ev => { if (ev.key === 'Enter') createKey(); });
 
 // Whether a session exists is the server's business, not this page's: ask.

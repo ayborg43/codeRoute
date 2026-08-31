@@ -111,6 +111,11 @@ type Catalog struct {
 	mu       sync.RWMutex
 	profiles []ModelProfile
 
+	// confirmed holds models a probe has shown this account may actually use.
+	// Kept apart from tags because it is evidence rather than instruction, and
+	// it expires.
+	confirmed map[string]bool
+
 	// tags are an operator's own statements about which models suit which
 	// work, keyed by provider/model. Where a task has any tagged model,
 	// routing for that task uses only those — a tag is an instruction, not
@@ -137,6 +142,7 @@ func NewCatalog() *Catalog {
 		profiles:   out,
 		discovered: map[string][]ModelProfile{},
 		tags:       map[string][]TaskType{},
+		confirmed:  map[string]bool{},
 	}
 }
 
@@ -597,5 +603,58 @@ func (c *Catalog) TaggedCount() map[TaskType]int {
 			out[t]++
 		}
 	}
+	return out
+}
+
+// SetConfirmed records which models a probe has shown to work for this
+// account, keyed provider/model.
+func (c *Catalog) SetConfirmed(confirmed map[string]bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.confirmed = make(map[string]bool, len(confirmed))
+	for k, v := range confirmed {
+		if v {
+			c.confirmed[k] = true
+		}
+	}
+}
+
+// Confirmed reports whether a probe has recently shown this model to work.
+func (c *Catalog) Confirmed(providerName, model string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.confirmed[TagKey(providerName, model)]
+}
+
+// AnyConfirmed reports whether probing has established anything at all.
+//
+// This is what makes the preference safe to apply: until a sweep has run there
+// is nothing to prefer, and treating an unprobed deployment as "nothing works"
+// would make it unroutable.
+func (c *Catalog) AnyConfirmed() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.confirmed) > 0
+}
+
+// PreferConfirmed reorders a pool so models shown to work come first.
+//
+// A preference rather than a filter: a model that has not been probed is not
+// known to be broken, and excluding it would make routing depend on a sweep
+// having reached everything — which it deliberately never does.
+func (c *Catalog) PreferConfirmed(pool []ModelProfile) []ModelProfile {
+	if !c.AnyConfirmed() {
+		return pool
+	}
+
+	out := make([]ModelProfile, len(pool))
+	copy(out, pool)
+
+	sort.SliceStable(out, func(i, j int) bool {
+		a := c.Confirmed(out[i].Provider, out[i].Model)
+		b := c.Confirmed(out[j].Provider, out[j].Model)
+		return a && !b
+	})
 	return out
 }

@@ -80,6 +80,21 @@ type Config struct {
 	// routing catalogue. Zero disables the feedback loop.
 	LatencyFeedback time.Duration
 
+	// ProbeInterval is how often a trial completion is sent to the models
+	// routing would actually reach, to find out which ones this account may
+	// use before a real request has to discover it. Zero disables probing.
+	ProbeInterval time.Duration
+
+	// ProbeModelsPerProvider bounds a sweep. Probing every model at every
+	// provider would cost real money and burn the free allowances that
+	// probing exists to protect.
+	ProbeModelsPerProvider int
+
+	// ProbeFreshness is how long a result is trusted. Entitlements and
+	// balances change, so a model that worked last week is not evidence
+	// about today.
+	ProbeFreshness time.Duration
+
 	// ObservationWindow is how far back routing looks when judging a model.
 	// Long enough to gather a usable sample, short enough that a provider
 	// that has recovered is not held to yesterday's failures.
@@ -191,6 +206,9 @@ func Load() *Config {
 		catalogErr:             catalogErr,
 		LatencyFeedback:        getEnvDuration("LATENCY_FEEDBACK_INTERVAL", 5*time.Minute),
 		ObservationWindow:      getEnvDuration("OBSERVATION_WINDOW", 6*time.Hour),
+		ProbeInterval:          getEnvDuration("PROBE_INTERVAL", 6*time.Hour),
+		ProbeModelsPerProvider: getEnvInt("PROBE_MODELS_PER_PROVIDER", 3),
+		ProbeFreshness:         getEnvDuration("PROBE_FRESHNESS", 24*time.Hour),
 		AdminToken:             os.Getenv("ADMIN_TOKEN"),
 		BootstrapAdminEmail:    os.Getenv("ADMIN_EMAIL"),
 		BootstrapAdminPassword: os.Getenv("ADMIN_PASSWORD"),
@@ -233,6 +251,12 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if c.ProbeModelsPerProvider < 1 {
+		return fmt.Errorf("PROBE_MODELS_PER_PROVIDER must be at least 1, got %d", c.ProbeModelsPerProvider)
+	}
+	if c.ProbeFreshness <= 0 {
+		return fmt.Errorf("PROBE_FRESHNESS must be positive, got %s", c.ProbeFreshness)
+	}
 	if c.ObservationWindow <= 0 {
 		return fmt.Errorf("OBSERVATION_WINDOW must be positive, got %s", c.ObservationWindow)
 	}

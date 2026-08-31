@@ -200,7 +200,7 @@ func TestRecentUsageNamesTheKey(t *testing.T) {
 
 	logUsage(t, database, key.ID, "gpt-4o", "openai", "success", 5, 6, 900, 0.03, false)
 
-	entries, err := RecentUsage(context.Background(), database, 10)
+	entries, err := RecentUsage(context.Background(), database, 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestRecentUsageSurvivesKeyRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := RecentUsage(context.Background(), database, 10)
+	entries, err := RecentUsage(context.Background(), database, 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

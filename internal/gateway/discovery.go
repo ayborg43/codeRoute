@@ -130,6 +130,9 @@ func (g *Gateway) RefreshProvider(ctx context.Context, name string) {
 		if err := db.ForgetDiscoveredModels(ctx, g.db, name); err != nil {
 			log.Printf("discovery: could not drop %s models: %v", name, err)
 		}
+		if err := db.ForgetProbes(ctx, g.db, name); err != nil {
+			log.Printf("discovery: could not drop %s probe results: %v", name, err)
+		}
 		return
 	}
 

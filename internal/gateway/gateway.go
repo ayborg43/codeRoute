@@ -139,10 +139,10 @@ type PlannedStep struct {
 // Plan reports the chain a request for this model would try, in order, without
 // sending anything. Routing decisions are otherwise only visible in hindsight
 // through the usage log, which is a poor way to answer "what will it do".
-func (g *Gateway) Plan(model string) ([]PlannedStep, string, error) {
+func (g *Gateway) Plan(model string) ([]PlannedStep, string, string, error) {
 	keys, err := g.ConfiguredKeys()
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 
 	req := &provider.ChatRequest{
@@ -160,7 +160,15 @@ func (g *Gateway) Plan(model string) ([]PlannedStep, string, error) {
 			Cooldown: !g.allow(c.provider),
 		})
 	}
-	return steps, string(task), nil
+
+	// An empty chain is exactly when an explanation is worth most, and
+	// returning a bare empty list left the operator to guess between "no keys",
+	// "marks too narrow" and "everything is sidelined".
+	var reason string
+	if len(steps) == 0 {
+		reason = g.unroutable(req, keys).Error()
+	}
+	return steps, string(task), reason, nil
 }
 
 // Catalog exposes the routing catalogue, for the models endpoint and pricing.
@@ -531,7 +539,8 @@ func (g *Gateway) freeNamed(model string, keys map[string]string) []candidate {
 // provider so failover moves between vendors rather than retrying one.
 func (g *Gateway) freeCandidates(keys map[string]string, task routing.TaskType, intent sentinelIntent) []candidate {
 	pool := g.restrictToTagged(g.catalog.FreeModels(), task)
-	return g.pickOnePerProvider(g.catalog.RankForTask(pool, task, g.objectiveFor(intent)), keys)
+	pool = g.catalog.RankForTask(pool, task, g.objectiveFor(intent))
+	return g.pickOnePerProvider(g.catalog.PreferConfirmed(pool), keys)
 }
 
 // restrictToTagged narrows a pool to the models an operator marked for the
@@ -605,6 +614,11 @@ func (g *Gateway) discoveredCandidates(keys map[string]string, task routing.Task
 		return !sa && sb
 	})
 
+	// Models a probe has confirmed working move to the front. Applied last so
+	// it outranks price and inference: knowing a model answers for this
+	// account is worth more than knowing it is cheap.
+	pool = g.catalog.PreferConfirmed(pool)
+
 	return g.pickOnePerProvider(pool, keys)
 }
 
@@ -650,7 +664,16 @@ func (g *Gateway) pickOnePerProvider(pool []routing.ModelProfile, keys map[strin
 		}
 	}
 
+	// The cap must never stop a provider being tried once. With more providers
+	// than the cap, truncating the first round silently excluded the ones at
+	// the end of it — a deployment with eleven providers and a cap of eight
+	// would never reach three of them, however healthy they were. The cap is
+	// really about how many *retries* to spend, so it applies from the second
+	// round on.
 	limit := g.cfg.MaxAttempts
+	if limit < len(order) {
+		limit = len(order)
+	}
 	if limit < 1 {
 		limit = 1
 	}
@@ -980,7 +1003,14 @@ func (g *Gateway) ProviderNames() []string {
 }
 
 // ConfiguredKeys returns the decrypted upstream keys, by provider.
+//
+// A gateway with no database has no stored keys rather than being an error:
+// that is the shape used by tests, and a nil dereference is a poor way to say
+// "nothing is configured".
 func (g *Gateway) ConfiguredKeys() (map[string]string, error) {
+	if g.db == nil {
+		return map[string]string{}, nil
+	}
 	return db.ProviderKeys(g.db, g.cfg.EncryptionKey)
 }
 
