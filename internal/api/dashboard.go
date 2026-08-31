@@ -92,13 +92,24 @@ func (h *Handler) dashboardUsage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	entries, err := db.RecentUsage(r.Context(), h.db, limit)
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+
+	// One extra row reveals whether another page follows, without the client
+	// having to guess from a full page or issue a separate count query.
+	entries, err := db.RecentUsage(r.Context(), h.db, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error(), "internal_error")
 		return
 	}
+	hasMore := len(entries) > limit
+	if hasMore {
+		entries = entries[:limit]
+	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": entries})
+	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": entries, "has_more": hasMore})
 }
 
 // dashboardKeys lists the client keys, so the dashboard can show what exists
