@@ -83,6 +83,9 @@ func main() {
 	if err := gw.LoadModelTags(ctx); err != nil {
 		log.Printf("could not load model markings: %v", err)
 	}
+	if err := gw.LoadBlacklist(ctx); err != nil {
+		log.Printf("could not load model blacklist: %v", err)
+	}
 	gw.StartDiscovery(ctx, cfg.DiscoveryInterval)
 	if err := gw.LoadConfirmedModels(ctx); err != nil {
 		log.Printf("could not load probe results: %v", err)

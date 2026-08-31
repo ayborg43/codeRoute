@@ -965,6 +965,68 @@ func TestTagsDoNotBlockNamedModels(t *testing.T) {
 	}
 }
 
+// Unlike a tag, a blacklist is a veto: it must hold even for automatic
+// routing that would otherwise have picked the model first.
+func TestBlacklistExcludesFromAutomaticRouting(t *testing.T) {
+	g := testGateway(t, "off", "balanced")
+
+	g.catalog.SetDiscovered("p", []provider.DiscoveredModel{
+		{Provider: "p", Model: "banned", PriceKnown: true},
+		{Provider: "p", Model: "fine", PriceKnown: true},
+	})
+	g.catalog.SetBlacklist(map[string]bool{
+		routing.TagKey("p", "banned"): true,
+	})
+
+	cands, _ := g.plan(req("auto", "hi"), keysFor("p"))
+	for _, c := range cands {
+		if c.provider == "p" && c.model == "banned" {
+			t.Fatalf("blacklisted model was still offered: %+v", cands)
+		}
+	}
+}
+
+// The whole point of a blacklist over a tag: a caller naming the model
+// directly must not be able to route around it.
+func TestBlacklistBlocksNamedModels(t *testing.T) {
+	g := testGateway(t, "off", "balanced")
+
+	g.catalog.SetDiscovered("p", []provider.DiscoveredModel{
+		{Provider: "p", Model: "banned", PriceKnown: true},
+	})
+	g.catalog.SetBlacklist(map[string]bool{
+		routing.TagKey("p", "banned"): true,
+	})
+
+	cands, _ := g.plan(req("banned", "hi"), keysFor("p"))
+	if len(cands) != 0 {
+		t.Errorf("a blacklisted model was honoured when named directly: %+v", cands)
+	}
+}
+
+// Removing an entry from the blacklist must restore routing to it — the
+// dashboard's "un-blacklist" action has to actually work.
+func TestUnblacklistingRestoresTheModel(t *testing.T) {
+	g := testGateway(t, "off", "balanced")
+
+	g.catalog.SetDiscovered("p", []provider.DiscoveredModel{
+		{Provider: "p", Model: "reinstated", PriceKnown: true},
+	})
+	g.catalog.SetBlacklist(map[string]bool{
+		routing.TagKey("p", "reinstated"): true,
+	})
+	if cands, _ := g.plan(req("reinstated", "hi"), keysFor("p")); len(cands) != 0 {
+		t.Fatalf("setup: model should start blacklisted, got %+v", cands)
+	}
+
+	g.catalog.SetBlacklist(map[string]bool{})
+
+	cands, _ := g.plan(req("reinstated", "hi"), keysFor("p"))
+	if len(cands) == 0 || cands[0].model != "reinstated" {
+		t.Errorf("unblacklisted model was not restored: %+v", cands)
+	}
+}
+
 // When every marked model is unusable, the error must say so — a stale mark
 // list is a likely cause and an easy fix.
 func TestUnroutableExplainsStaleTags(t *testing.T) {

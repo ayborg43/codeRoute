@@ -22,6 +22,7 @@ func (h *Handler) registerAdminRoutes(mux *http.ServeMux) {
 
 	h.registerProviderRoutes(mux)
 	h.registerTagRoutes(mux)
+	h.registerBlacklistRoutes(mux)
 	h.registerUserRoutes(mux)
 }
 
