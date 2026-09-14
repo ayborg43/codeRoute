@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 
 	"github.com/coderouter/coderouter/internal/config"
@@ -197,6 +198,22 @@ func TestClientKeyLifecycle(t *testing.T) {
 	if len(list.Data) != 1 || list.Data[0].Name != "vscode" {
 		t.Fatalf("list = %+v", list.Data)
 	}
+	if !list.Data[0].Revealable {
+		t.Error("a freshly minted key was not flagged revealable")
+	}
+
+	// It can be viewed again later, not just at creation.
+	rec = do(t, h, http.MethodGet, "/v1/admin/keys/"+list.Data[0].ID+"/reveal", testAdminToken, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reveal = %d: %s", rec.Code, rec.Body.String())
+	}
+	var revealed struct {
+		Key string `json:"key"`
+	}
+	decode(t, rec, &revealed)
+	if revealed.Key != created.Key {
+		t.Errorf("revealed = %q, want %q", revealed.Key, created.Key)
+	}
 
 	// Revoking is the only control left over a caller.
 	rec = do(t, h, http.MethodDelete, "/v1/admin/keys/"+list.Data[0].ID, testAdminToken, "")
@@ -211,14 +228,38 @@ func TestClientKeyLifecycle(t *testing.T) {
 	if msg := errorMessage(t, rec); !strings.Contains(msg, "revoked") {
 		t.Errorf("revoked key error said %q", msg)
 	}
+
+	// Revocation stops the key from authenticating; it does not stop an
+	// operator from inspecting it.
+	rec = do(t, h, http.MethodGet, "/v1/admin/keys/"+list.Data[0].ID+"/reveal", testAdminToken, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reveal after revoke = %d: %s", rec.Code, rec.Body.String())
+	}
+	decode(t, rec, &revealed)
+	if revealed.Key != created.Key {
+		t.Errorf("revealed after revoke = %q, want %q", revealed.Key, created.Key)
+	}
+
+	// Reveal sits behind the same admin gate as every other key-management
+	// endpoint.
+	rec = do(t, h, http.MethodGet, "/v1/admin/keys/"+list.Data[0].ID+"/reveal", "wrong-token", "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("reveal without admin auth = %d, want 401", rec.Code)
+	}
+
+	// An unknown id is a 404, not a decryption error.
+	rec = do(t, h, http.MethodGet, "/v1/admin/keys/"+uuid.New().String()+"/reveal", testAdminToken, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("reveal of unknown id = %d, want 404", rec.Code)
+	}
 }
 
 // Documents the consequence of the change: a key is now unlimited. If limiting
 // ever comes back, this test should fail and be reconsidered deliberately.
 func TestKeysAreUnlimited(t *testing.T) {
-	h, database, _ := liveHandler(t)
+	h, database, cfg := liveHandler(t)
 
-	raw, err := db.CreateClientKey(database, "burst")
+	raw, err := db.CreateClientKey(database, cfg.EncryptionKey, "burst")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -826,7 +867,7 @@ func TestPlaygroundIsNotBilledToAnyKey(t *testing.T) {
 	if err := db.StoreProviderKey(database, cfg.EncryptionKey, "openai", "sk-test"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.CreateClientKey(database, "someone"); err != nil {
+	if _, err := db.CreateClientKey(database, cfg.EncryptionKey, "someone"); err != nil {
 		t.Fatal(err)
 	}
 

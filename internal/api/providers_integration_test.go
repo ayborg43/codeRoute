@@ -131,7 +131,7 @@ func TestProviderKeyLifecycle(t *testing.T) {
 	}
 
 	// Routing now sees the provider, so /v1/models advertises its models.
-	raw, err := db.CreateClientKey(database, "k")
+	raw, err := db.CreateClientKey(database, cfg.EncryptionKey, "k")
 	if err != nil {
 		t.Fatal(err)
 	}

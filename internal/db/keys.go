@@ -41,6 +41,12 @@ type ClientKey struct {
 	// that checks the field for presence.
 	LastUsedAt *time.Time `json:"last_used_at"`
 	DisabledAt *time.Time `json:"disabled_at"`
+
+	// Revealable says whether the raw key was retained (encrypted) and can be
+	// fetched back later. Keys minted before that was supported have no
+	// encrypted copy on file, so revealing is impossible rather than just
+	// forbidden.
+	Revealable bool `json:"revealable"`
 }
 
 // Disabled reports whether the key has been revoked.
@@ -55,9 +61,10 @@ func timePtr(t sql.NullTime) *time.Time {
 	return &v
 }
 
-// CreateClientKey mints a client key, storing only its hash. The raw key is
-// returned once and is unrecoverable afterwards.
-func CreateClientKey(database *sql.DB, name string) (string, error) {
+// CreateClientKey mints a client key. Its hash is stored for authentication,
+// and an encrypted copy is kept alongside it so the raw key can be viewed
+// again later from the dashboard, not just at creation.
+func CreateClientKey(database *sql.DB, encryptionKey []byte, name string) (string, error) {
 	buf := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
 		return "", err
@@ -67,9 +74,14 @@ func CreateClientKey(database *sql.DB, name string) (string, error) {
 	hash := sha256.Sum256([]byte(rawKey))
 	id := uuid.New().String()
 
-	_, err := database.Exec(
-		`INSERT INTO api_keys (id, key_hash, name) VALUES ($1, $2, $3)`,
-		id, hash[:], name,
+	encrypted, err := encrypt([]byte(rawKey), encryptionKey)
+	if err != nil {
+		return "", err
+	}
+
+	_, err = database.Exec(
+		`INSERT INTO api_keys (id, key_hash, encrypted_key, name) VALUES ($1, $2, $3, $4)`,
+		id, hash[:], encrypted, name,
 	)
 	if err != nil {
 		return "", err
@@ -135,7 +147,7 @@ func RevokeClientKey(database *sql.DB, keyID string) error {
 // ListClientKeys returns every client key. Hashes are never returned.
 func ListClientKeys(database *sql.DB) ([]ClientKey, error) {
 	rows, err := database.Query(
-		`SELECT id, name, created_at, last_used_at, disabled_at
+		`SELECT id, name, created_at, last_used_at, disabled_at, encrypted_key IS NOT NULL
 		 FROM api_keys ORDER BY created_at`)
 	if err != nil {
 		return nil, err
@@ -147,7 +159,7 @@ func ListClientKeys(database *sql.DB) ([]ClientKey, error) {
 		var k ClientKey
 		var name sql.NullString
 		var lastUsed, disabled sql.NullTime
-		if err := rows.Scan(&k.ID, &name, &k.CreatedAt, &lastUsed, &disabled); err != nil {
+		if err := rows.Scan(&k.ID, &name, &k.CreatedAt, &lastUsed, &disabled, &k.Revealable); err != nil {
 			return nil, err
 		}
 		k.Name = name.String
@@ -155,6 +167,35 @@ func ListClientKeys(database *sql.DB) ([]ClientKey, error) {
 		keys = append(keys, k)
 	}
 	return keys, rows.Err()
+}
+
+// ErrKeyNotRevealable means the key was minted before raw keys were retained
+// (encrypted) for later viewing, so there is nothing to decrypt back to.
+var ErrKeyNotRevealable = errors.New("this key cannot be revealed; recreate it to get a viewable key")
+
+// RevealClientKey decrypts and returns the raw form of a stored client key,
+// for the dashboard's "view" action. The key need not be active: a revoked
+// key can still be inspected, just not used.
+func RevealClientKey(database *sql.DB, encryptionKey []byte, keyID string) (string, error) {
+	var encrypted []byte
+	err := database.QueryRow(
+		`SELECT encrypted_key FROM api_keys WHERE id = $1`, keyID,
+	).Scan(&encrypted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrInvalidKey
+	}
+	if err != nil {
+		return "", err
+	}
+	if encrypted == nil {
+		return "", ErrKeyNotRevealable
+	}
+
+	decrypted, err := decrypt(encrypted, encryptionKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt key: %w", err)
+	}
+	return string(decrypted), nil
 }
 
 // CountClientKeys reports how many client keys exist, for startup bootstrap.

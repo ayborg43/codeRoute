@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -18,6 +19,7 @@ func (h *Handler) registerAdminRoutes(mux *http.ServeMux) {
 	// adminAuthorized, which knows about both.
 	mux.HandleFunc("GET /v1/admin/keys", h.adminListKeys)
 	mux.HandleFunc("POST /v1/admin/keys", h.adminCreateKey)
+	mux.HandleFunc("GET /v1/admin/keys/{id}/reveal", h.adminRevealKey)
 	mux.HandleFunc("DELETE /v1/admin/keys/{id}", h.adminRevokeKey)
 
 	h.registerProviderRoutes(mux)
@@ -116,18 +118,36 @@ func (h *Handler) adminCreateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, err := db.CreateClientKey(h.db, body.Name)
+	raw, err := db.CreateClientKey(h.db, h.cfg.EncryptionKey, body.Name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error(), "internal_error")
 		return
 	}
 
-	// The raw key is shown exactly once; only its hash is stored.
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"key":     raw,
 		"name":    body.Name,
-		"warning": "store this now; it cannot be retrieved again",
+		"warning": "you can view this key again later from the dashboard",
 	})
+}
+
+// adminRevealKey decrypts and returns the raw form of a stored client key.
+func (h *Handler) adminRevealKey(w http.ResponseWriter, r *http.Request) {
+	if !h.adminAuthorized(w, r) {
+		return
+	}
+
+	raw, err := db.RevealClientKey(h.db, h.cfg.EncryptionKey, r.PathValue("id"))
+	switch {
+	case errors.Is(err, db.ErrInvalidKey):
+		writeError(w, http.StatusNotFound, "no key with that id", "invalid_request_error")
+	case errors.Is(err, db.ErrKeyNotRevealable):
+		writeError(w, http.StatusConflict, err.Error(), "invalid_request_error")
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error(), "internal_error")
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"key": raw})
+	}
 }
 
 func (h *Handler) adminRevokeKey(w http.ResponseWriter, r *http.Request) {

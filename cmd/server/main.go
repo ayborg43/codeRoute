@@ -162,7 +162,7 @@ func bootstrap(database *sql.DB, cfg *config.Config) error {
 		return err
 	}
 	if count == 0 {
-		rawKey, err := db.CreateClientKey(database, "bootstrap")
+		rawKey, err := db.CreateClientKey(database, cfg.EncryptionKey, "bootstrap")
 		if err != nil {
 			return err
 		}
