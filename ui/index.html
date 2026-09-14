@@ -390,9 +390,9 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
 
   <div class="card" style="margin-top:1.5rem">
     <h2>Client Keys</h2>
-    <p class="hint">What you paste into your editor. Shown once at creation and
-       stored only as a hash. Revoking is the only way to cut a key off &mdash;
-       keys carry no rate limit or spend cap.</p>
+    <p class="hint">What you paste into your editor. View it again any time from
+       this table. Revoking is the only way to cut a key off &mdash; keys carry
+       no rate limit or spend cap.</p>
     <div class="scroll">
       <table>
         <thead><tr><th>Name</th><th>Status</th><th>Created</th><th>Last used</th><th></th></tr></thead>
@@ -1239,15 +1239,43 @@ async function loadKeys() {
         (revoked ? 'revoked' : 'active') + '</td>' +
       '<td class="muted">' + when(k.created_at) + '</td>' +
       '<td class="muted">' + when(k.last_used_at) + '</td>' +
-      '<td>' + (revoked ? '' :
-        '<button class="btn danger small" data-revoke="' + esc(k.id) +
-        '" data-name="' + esc(k.name || '(unnamed)') + '">Revoke</button>') +
+      '<td>' +
+        (k.revealable ?
+          '<button class="btn ghost small" data-reveal="' + esc(k.id) + '">View</button>' : '') +
+        (revoked ? '' :
+          '<button class="btn danger small" data-revoke="' + esc(k.id) +
+          '" data-name="' + esc(k.name || '(unnamed)') + '">Revoke</button>') +
       '</td></tr>';
   }).join('');
 
+  tb.querySelectorAll('[data-reveal]').forEach(b =>
+    b.addEventListener('click', () => revealKey(b.getAttribute('data-reveal'), b)));
   tb.querySelectorAll('[data-revoke]').forEach(b =>
     b.addEventListener('click', () =>
       revokeKey(b.getAttribute('data-revoke'), b.getAttribute('data-name'))));
+}
+
+async function revealKey(id, button) {
+  button.disabled = true;
+  try {
+    banner('');
+    const d = await api('/v1/admin/keys/' + encodeURIComponent(id) + '/reveal');
+
+    const el = $('key-display');
+    el.innerHTML =
+      '<div class="field"><span class="label">Base URL</span>' +
+        '<span class="value" id="minted-url">' + esc(baseURL()) + '</span>' +
+        '<button class="btn ghost small" id="copy-minted-url">Copy</button></div>' +
+      '<div class="field"><span class="label">API key</span>' +
+        '<span class="value" id="minted-key">' + esc(d.key) + '</span>' +
+        '<button class="btn ghost small" id="copy-minted-key">Copy</button></div>';
+    el.classList.add('visible');
+
+    $('copy-minted-url').addEventListener('click', ev =>
+      copyText(baseURL(), ev.currentTarget, $('minted-url')));
+    $('copy-minted-key').addEventListener('click', ev =>
+      copyText(d.key, ev.currentTarget, $('minted-key')));
+  } catch (e) { handle(e); } finally { button.disabled = false; }
 }
 
 async function loadBlacklist() {
@@ -1303,8 +1331,8 @@ async function createKey() {
       body: JSON.stringify({name: name}),
     });
 
-    // Both halves of what an editor needs, together: the key is only ever
-    // shown once, and it is useless without the endpoint.
+    // Both halves of what an editor needs, together: the key is useless
+    // without the endpoint it talks to.
     const el = $('key-display');
     el.innerHTML =
       '<div class="field"><span class="label">Base URL</span>' +

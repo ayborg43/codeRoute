@@ -42,7 +42,8 @@ A revoked key gets `401`. Nothing else is enforced against a caller.
 | Endpoint | Purpose |
 |---|---|
 | `GET /v1/admin/keys` | List client keys (never their hashes) |
-| `POST /v1/admin/keys` | Mint a client key; the raw key is shown exactly once |
+| `POST /v1/admin/keys` | Mint a client key; an encrypted copy is kept so it can be viewed again |
+| `GET /v1/admin/keys/{id}/reveal` | View a client key's raw value again |
 | `DELETE /v1/admin/keys/{id}` | Revoke a key, keeping its usage history |
 | `GET /v1/admin/providers` | Which upstreams have a key, by fingerprint |
 | `PUT /v1/admin/providers/{name}` | Store or rotate an upstream key, verified before it is saved |

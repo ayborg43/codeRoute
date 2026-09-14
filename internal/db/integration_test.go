@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -10,9 +11,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/coderouter/coderouter/internal/provider"
 	"github.com/coderouter/coderouter/migrations"
 )
+
+// testEncKey is the AES-128 key these tests use wherever a client or
+// provider key needs to be encrypted at rest.
+var testEncKey = []byte("0123456789abcdef")
 
 // newTestDB connects to the database named by TEST_DATABASE_URL, applies the
 // migrations, and clears the tables these tests touch. Without that variable
@@ -85,7 +92,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 
 func TestValidateClientKeyRejects(t *testing.T) {
 	database := newTestDB(t)
-	raw, _ := CreateClientKey(database, "k")
+	raw, _ := CreateClientKey(database, testEncKey, "k")
 
 	for _, header := range []string{"", "Bearer ", "Bearer nonsense", "Bearer cr_wrong", raw + "x"} {
 		if _, err := ValidateClientKey(database, header); !errors.Is(err, ErrInvalidKey) {
@@ -101,7 +108,7 @@ func TestValidateClientKeyRejects(t *testing.T) {
 
 func TestRevokedKeyStopsWorkingButKeepsItsHistory(t *testing.T) {
 	database := newTestDB(t)
-	raw, _ := CreateClientKey(database, "k")
+	raw, _ := CreateClientKey(database, testEncKey, "k")
 
 	key, err := ValidateClientKey(database, raw)
 	if err != nil {
@@ -195,7 +202,7 @@ func TestSummarizeRespectsTheWindow(t *testing.T) {
 
 func TestRecentUsageNamesTheKey(t *testing.T) {
 	database := newTestDB(t)
-	raw, _ := CreateClientKey(database, "laptop")
+	raw, _ := CreateClientKey(database, testEncKey, "laptop")
 	key, _ := ValidateClientKey(database, raw)
 
 	logUsage(t, database, key.ID, "gpt-4o", "openai", "success", 5, 6, 900, 0.03, false)
@@ -220,7 +227,7 @@ func TestRecentUsageNamesTheKey(t *testing.T) {
 // Usage rows outlive the key that made them, so the join must not drop them.
 func TestRecentUsageSurvivesKeyRevocation(t *testing.T) {
 	database := newTestDB(t)
-	raw, _ := CreateClientKey(database, "laptop")
+	raw, _ := CreateClientKey(database, testEncKey, "laptop")
 	key, _ := ValidateClientKey(database, raw)
 
 	logUsage(t, database, key.ID, "gpt-4o", "openai", "success", 5, 6, 900, 0.03, false)
@@ -383,7 +390,7 @@ func TestDeleteProviderKey(t *testing.T) {
 func TestClientKeyIsJustACredential(t *testing.T) {
 	database := newTestDB(t)
 
-	raw, err := CreateClientKey(database, "laptop")
+	raw, err := CreateClientKey(database, testEncKey, "laptop")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,13 +413,102 @@ func TestClientKeyIsJustACredential(t *testing.T) {
 	}
 }
 
+func TestRevealClientKeyRoundTrips(t *testing.T) {
+	database := newTestDB(t)
+
+	raw, err := CreateClientKey(database, testEncKey, "laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ValidateClientKey(database, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	revealed, err := RevealClientKey(database, testEncKey, key.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revealed != raw {
+		t.Errorf("revealed key = %q, want %q", revealed, raw)
+	}
+
+	keys, err := ListClientKeys(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 || !keys[0].Revealable {
+		t.Errorf("key not flagged revealable: %+v", keys)
+	}
+}
+
+// A revoked key can still be inspected; revocation only stops it from
+// authenticating requests.
+func TestRevealClientKeyWorksAfterRevocation(t *testing.T) {
+	database := newTestDB(t)
+
+	raw, err := CreateClientKey(database, testEncKey, "laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ValidateClientKey(database, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RevokeClientKey(database, key.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	revealed, err := RevealClientKey(database, testEncKey, key.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revealed != raw {
+		t.Errorf("revealed key = %q, want %q", revealed, raw)
+	}
+}
+
+func TestRevealClientKeyRejectsUnknownID(t *testing.T) {
+	database := newTestDB(t)
+
+	if _, err := RevealClientKey(database, testEncKey, uuid.New().String()); !errors.Is(err, ErrInvalidKey) {
+		t.Errorf("err = %v, want ErrInvalidKey", err)
+	}
+}
+
+// A key minted before the raw form was retained has no encrypted copy on
+// file, so it cannot suddenly become revealable.
+func TestRevealClientKeyRejectsLegacyKeys(t *testing.T) {
+	database := newTestDB(t)
+
+	id := uuid.New().String()
+	hash := sha256.Sum256([]byte("cr_legacy"))
+	if _, err := database.Exec(
+		`INSERT INTO api_keys (id, key_hash, name) VALUES ($1, $2, $3)`,
+		id, hash[:], "legacy"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := RevealClientKey(database, testEncKey, id); !errors.Is(err, ErrKeyNotRevealable) {
+		t.Errorf("err = %v, want ErrKeyNotRevealable", err)
+	}
+
+	keys, err := ListClientKeys(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 || keys[0].Revealable {
+		t.Errorf("legacy key wrongly flagged revealable: %+v", keys)
+	}
+}
+
 func TestListClientKeysHidesHashes(t *testing.T) {
 	database := newTestDB(t)
 
-	if _, err := CreateClientKey(database, "a"); err != nil {
+	if _, err := CreateClientKey(database, testEncKey, "a"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CreateClientKey(database, "b"); err != nil {
+	if _, err := CreateClientKey(database, testEncKey, "b"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -441,7 +537,7 @@ func TestListClientKeysHidesHashes(t *testing.T) {
 func TestRevokedKeysStayListed(t *testing.T) {
 	database := newTestDB(t)
 
-	raw, _ := CreateClientKey(database, "leaked")
+	raw, _ := CreateClientKey(database, testEncKey, "leaked")
 	key, err := ValidateClientKey(database, raw)
 	if err != nil {
 		t.Fatal(err)
@@ -495,7 +591,7 @@ func TestTenancyIsGoneFromTheSchema(t *testing.T) {
 func TestNullableTimestampsMarshalAsNull(t *testing.T) {
 	database := newTestDB(t)
 
-	raw, err := CreateClientKey(database, "fresh")
+	raw, err := CreateClientKey(database, testEncKey, "fresh")
 	if err != nil {
 		t.Fatal(err)
 	}
