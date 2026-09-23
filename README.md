@@ -30,12 +30,21 @@ unauthenticated key-minting surface would be worse than having none at all.
 | Endpoint | Purpose |
 |---|---|
 | `POST /v1/chat/completions` | OpenAI-compatible completions, streaming supported |
+| `POST /v1/responses` | OpenAI's Responses API, translated to a chat completion and back |
 | `GET /v1/models` | Models available given the configured provider keys |
 | `POST /v1/iot/inference` | Device inference, edge-first with cloud fallback |
 | `POST /v1/iot/telemetry` | Device telemetry ingest |
 | `GET /v1/iot/telemetry?device_id=` | Recent readings for a device |
 
 A revoked key gets `401`. Nothing else is enforced against a caller.
+
+`/v1/responses` shares routing, failover, pricing and usage logging with
+`/v1/chat/completions` — a request is translated into an ordinary chat
+completion and the result translated back. Function tools and tool-call
+history survive that round trip on every provider: OpenAI-dialect providers
+receive them as-is, and the native Anthropic and Google clients translate them
+into their own formats. Hosted tools (`web_search`, `file_search`, …) and
+`previous_response_id` are not supported; send the full conversation each turn.
 
 ### Management — signed in, or holding `ADMIN_TOKEN`
 

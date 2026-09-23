@@ -55,6 +55,7 @@ func NewHandler(gw *gateway.Gateway, database *sql.DB, cfg *config.Config, bridg
 	h.registerDashboardRoutes(mux)
 
 	mux.HandleFunc("/v1/chat/completions", h.handleChatCompletions)
+	mux.HandleFunc("/v1/responses", h.handleResponses)
 	mux.HandleFunc("/v1/models", h.handleModels)
 	mux.HandleFunc("/v1/iot/telemetry", h.handleTelemetry)
 	mux.HandleFunc("/v1/iot/inference", h.handleIoTInference)
