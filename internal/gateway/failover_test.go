@@ -61,6 +61,7 @@ func failoverGateway(t *testing.T, ups map[string]*upstream) (*Gateway, map[stri
 
 	cfg := config.Load()
 	cfg.RoutingMode = "always"
+	cfg.FreeOnly = false
 
 	var specs []provider.Spec
 	keys := map[string]string{}
@@ -188,6 +189,7 @@ func TestStreamingCannotFailOverOnceBytesAreSent(t *testing.T) {
 
 	cfg := config.Load()
 	cfg.RoutingMode = "always"
+	cfg.FreeOnly = false
 	cfg.Providers = []provider.Spec{
 		{Name: "partial", BaseURL: partial.URL + "/v1", Kind: provider.KindOpenAI},
 		{Name: "rescue", BaseURL: rescue.server.URL + "/v1", Kind: provider.KindOpenAI},
@@ -338,6 +340,7 @@ func TestSecondModelAtTheSameProviderRescuesTheRequest(t *testing.T) {
 
 	cfg := config.Load()
 	cfg.RoutingMode = "always"
+	cfg.FreeOnly = false
 	cfg.AttemptsPerProvider = 2
 	cfg.Providers = []provider.Spec{{Name: "solo", BaseURL: srv.URL + "/v1", Kind: provider.KindOpenAI}}
 
@@ -493,8 +496,10 @@ func TestASuccessfulProbeClearsTheBench(t *testing.T) {
 	}
 }
 
-// The sweep is bounded: probing every model at every provider would cost real
-// money and burn the free allowances it exists to protect.
+// The sweep is bounded outside free-only mode: probing every model at every
+// provider would cost real money and burn the free allowances it exists to
+// protect. (In free-only mode every free model is probed — see
+// TestFreeSweepCoversAllFreeModels below.)
 func TestProbeTargetsAreBounded(t *testing.T) {
 	g := testGateway(t, "auto", "balanced")
 	g.cfg.ProbeModelsPerProvider = 2
@@ -553,6 +558,36 @@ func TestMarkedModelsAreAlwaysProbed(t *testing.T) {
 	}
 	if !found {
 		t.Error("a marked model was not probed, though routing is restricted to it")
+	}
+}
+
+// In free-only mode the sweep covers every known free model — trial
+// completions against free models cost nothing — including ones that refused
+// before, so recovery is noticed on the next sweep.
+func TestFreeSweepCoversAllFreeModels(t *testing.T) {
+	g := testGateway(t, "auto", "balanced")
+	g.SetFreeOnly(true)
+	g.cfg.ProbeModelsPerProvider = 1 // must not bound the free sweep
+
+	var models []provider.DiscoveredModel
+	for i := 0; i < 20; i++ {
+		models = append(models, provider.DiscoveredModel{
+			Provider: "p", Model: fmt.Sprintf("free-%02d", i), PriceKnown: true,
+		})
+	}
+	models = append(models, provider.DiscoveredModel{
+		Provider: "p", Model: "paid", InputCostPer1M: 1, OutputCostPer1M: 1, PriceKnown: true,
+	})
+	g.catalog.SetDiscovered("p", models)
+
+	targets := g.probeTargets(keysFor("p"))
+	if len(targets) != 20 {
+		t.Errorf("free sweep covered %d models, want all 20 free ones (and not the paid one)", len(targets))
+	}
+	for _, c := range targets {
+		if c.model == "paid" {
+			t.Errorf("free sweep probed a paid model: %+v", targets)
+		}
 	}
 }
 

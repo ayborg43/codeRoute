@@ -18,6 +18,9 @@ func testGateway(t *testing.T, mode, objective string) *Gateway {
 	cfg.RoutingMode = mode
 	cfg.RoutingObjective = objective
 	cfg.RouterModel = "auto"
+	// Planning tests predate the free-only default; keep them on the
+	// all-models path unless the test itself opts into free-only.
+	cfg.FreeOnly = false
 	gw, err := New(nil, Options{Config: cfg})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -733,16 +736,17 @@ func TestFreeSentinelIgnoresTheToggle(t *testing.T) {
 	}
 }
 
-// Free-only mode substitutes a free model for one that would have cost money.
-// It must not substitute for a named model that is already free.
+// Free-only mode rejects a named model that would have cost money, and
+// honours a named model that is already free.
 func TestFreeOnlyHonoursANamedFreeModel(t *testing.T) {
 	g := testGateway(t, "off", "balanced")
-	g.catalog.SetDiscovered("p", []provider.DiscoveredModel{
-		{Provider: "p", Model: "cheapest-free", PriceKnown: true},
-		{Provider: "p", Model: "another-free", PriceKnown: true},
-		{Provider: "p", Model: "costs-money", InputCostPer1M: 3, OutputCostPer1M: 6, PriceKnown: true},
+	// Use a real registry provider so unroutable() sees a keyed provider.
+	g.catalog.SetDiscovered("openai", []provider.DiscoveredModel{
+		{Provider: "openai", Model: "cheapest-free", PriceKnown: true},
+		{Provider: "openai", Model: "another-free", PriceKnown: true},
+		{Provider: "openai", Model: "costs-money", InputCostPer1M: 3, OutputCostPer1M: 6, PriceKnown: true},
 	})
-	keys := keysFor("p")
+	keys := keysFor("openai")
 	g.SetFreeOnly(true)
 
 	// A free model the caller named is used as asked.
@@ -751,15 +755,68 @@ func TestFreeOnlyHonoursANamedFreeModel(t *testing.T) {
 		t.Errorf("a named free model was replaced: %+v", cands)
 	}
 
-	// A priced one is substituted rather than allowed to spend.
+	// A priced one is rejected: no candidates, and the error names the model.
 	cands, _ = g.plan(req("costs-money", "hi"), keys)
-	if len(cands) == 0 {
-		t.Fatal("no substitute offered")
+	if len(cands) != 0 {
+		t.Fatalf("free-only planned a chain for a paid model: %+v", cands)
+	}
+	r := &provider.ChatRequest{Model: "costs-money", Messages: []provider.Message{{Role: "user", Content: "hi"}}}
+	err := g.unroutable(r, keys)
+	if err == nil || !strings.Contains(err.Error(), `"costs-money"`) ||
+		!strings.Contains(err.Error(), "not available") {
+		t.Errorf("rejection did not name the paid model: %v", err)
+	}
+}
+
+// In free-only mode, once probes have confirmed one model, the refused ones
+// leave the chain — but the next sweep re-probes them, so a recovered model
+// routes again with no operator action.
+func TestFreeRoutingOnlyUsesAvailableModels(t *testing.T) {
+	g := testGateway(t, "auto", "balanced")
+	g.catalog.SetDiscovered("openai", []provider.DiscoveredModel{
+		{Provider: "openai", Model: "works", PriceKnown: true},
+		{Provider: "openai", Model: "refuses", PriceKnown: true},
+	})
+	keys := keysFor("openai")
+	g.SetFreeOnly(true)
+
+	g.catalog.SetConfirmed(map[string]bool{
+		routing.TagKey("openai", "works"): true,
+	})
+	g.catalog.MarkProbed([]string{routing.TagKey("openai", "refuses")})
+
+	cands, _ := g.plan(req("auto:free", "hi"), keys)
+	if len(cands) == 0 || cands[0].model != "works" {
+		t.Fatalf("chain did not lead with the available model: %+v", cands)
 	}
 	for _, c := range cands {
-		if c.model == "costs-money" {
-			t.Errorf("free-only let a priced model through: %+v", cands)
+		if c.model == "refuses" {
+			t.Errorf("unavailable model stayed in the chain: %+v", cands)
 		}
+	}
+
+	// Sweep targets still watch the refused model for recovery.
+	targets := g.probeTargets(keys)
+	found := map[string]bool{}
+	for _, c := range targets {
+		found[c.model] = true
+	}
+	if !found["works"] || !found["refuses"] {
+		t.Errorf("sweep stopped watching a refused model: %+v", targets)
+	}
+
+	// Recovery: the next sweep confirms it, routing uses it again.
+	g.catalog.SetConfirmed(map[string]bool{
+		routing.TagKey("openai", "works"):   true,
+		routing.TagKey("openai", "refuses"): true,
+	})
+	cands, _ = g.plan(req("auto:free", "hi"), keys)
+	seen := map[string]bool{}
+	for _, c := range cands {
+		seen[c.model] = true
+	}
+	if !seen["refuses"] {
+		t.Errorf("recovered model did not re-enter routing: %+v", cands)
 	}
 }
 

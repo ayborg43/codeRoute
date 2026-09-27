@@ -35,7 +35,9 @@ type Config struct {
 	Providers []provider.Spec
 
 	// FreeOnly refuses to route to any model with a non-zero or unpublished
-	// price. Callers can also ask per request with the "auto:free" model.
+	// price. This deployment is locked to free-only mode: the flag is always
+	// true and cannot be turned off at runtime. Callers can also ask per
+	// request with the "auto:free" model.
 	FreeOnly bool
 
 	// AttemptsPerProvider is how many of a provider's models one request may
@@ -181,7 +183,9 @@ func Load() *Config {
 			"google":    os.Getenv("GOOGLE_BASE_URL"),
 		},
 		Providers:           loadProviders(),
-		FreeOnly:            getEnvBool("FREE_ONLY", false),
+		// Free-only by default: this project only routes to free models
+		// unless an operator explicitly opts out at runtime.
+		FreeOnly:            getEnvBool("FREE_ONLY", true),
 		AttemptsPerProvider: getEnvInt("ROUTING_ATTEMPTS_PER_PROVIDER", 2),
 		MaxAttempts:         getEnvInt("ROUTING_MAX_ATTEMPTS", 8),
 		DiscoveryInterval:   getEnvDuration("DISCOVERY_INTERVAL", time.Hour),

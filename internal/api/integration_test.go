@@ -895,6 +895,69 @@ func TestPlaygroundIsNotBilledToAnyKey(t *testing.T) {
 	}
 }
 
+func TestChatRequiresAuthorization(t *testing.T) {
+	h, _, _ := liveHandler(t)
+
+	if rec := do(t, h, http.MethodPost, "/api/chat", "", `{"messages":[{"role":"user","content":"hi"}]}`); rec.Code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated = %d, want 401", rec.Code)
+	}
+}
+
+func TestChatValidatesInput(t *testing.T) {
+	h, _, _ := liveHandler(t)
+
+	for name, body := range map[string]string{
+		"no messages":          `{"model":"auto"}`,
+		"empty messages list":  `{"model":"auto","messages":[]}`,
+		"blank message":        `{"model":"auto","messages":[{"role":"user","content":"  "}]}`,
+		"invalid role":         `{"model":"auto","messages":[{"role":"invalid","content":"hi"}]}`,
+		"malformed":            `not json`,
+	} {
+		if rec := do(t, h, http.MethodPost, "/api/chat", testAdminToken, body); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s = %d, want 400", name, rec.Code)
+		}
+	}
+}
+
+func TestChatMultiTurnResponse(t *testing.T) {
+	upstream := newPlaygroundUpstream(t)
+
+	h, database, cfg := liveHandlerWith(t, func(c *config.Config) {
+		c.ProviderBaseURLs["openai"] = upstream.URL + "/v1"
+		c.RoutingMode = "off"
+	})
+	if err := db.StoreProviderKey(database, cfg.EncryptionKey, "openai", "sk-test"); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"model":"gpt-4o-mini","messages":[{"role":"user","content":"turn 1"},{"role":"assistant","content":"reply 1"},{"role":"user","content":"turn 2"}]}`
+	rec := do(t, h, http.MethodPost, "/api/chat", testAdminToken, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("= %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result struct {
+		Requested string `json:"requested"`
+		Answered  string `json:"answered"`
+		Provider  string `json:"provider"`
+		Content   string `json:"content"`
+		TokensIn  int    `json:"tokens_in"`
+		TokensOut int    `json:"tokens_out"`
+	}
+	decode(t, rec, &result)
+
+	if result.Content != "hello from the upstream" {
+		t.Errorf("content = %q", result.Content)
+	}
+	if result.Answered != "gpt-4o-mini" || result.Provider != "openai" {
+		t.Errorf("answered = %q via %q", result.Answered, result.Provider)
+	}
+	if result.TokensIn != 11 || result.TokensOut != 5 {
+		t.Errorf("tokens = %d in / %d out, want 11/5", result.TokensIn, result.TokensOut)
+	}
+}
+
+
 // newPlaygroundUpstream answers a completion with a known body.
 func newPlaygroundUpstream(t *testing.T) *httptest.Server {
 	t.Helper()

@@ -57,7 +57,8 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
       PROVIDERS: ${PROVIDERS:-}
-      FREE_ONLY: ${FREE_ONLY:-false}
+      # Locked on: this project only routes to free models.
+      FREE_ONLY: "true"
       DISCOVERY_INTERVAL: ${DISCOVERY_INTERVAL:-24h}
       OBSERVATION_WINDOW: ${OBSERVATION_WINDOW:-6h}
       PROBE_INTERVAL: ${PROBE_INTERVAL:-6h}

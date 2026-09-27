@@ -139,7 +139,17 @@ func (g *Gateway) probeOne(ctx context.Context, c candidate, apiKey string) db.P
 }
 
 // probeTargets picks which models are worth checking.
+//
+// In free-only mode (the default) every known free model is probed — free
+// completions cost nothing to trial, so there is no reason to sample only a
+// few per provider. The unavailable ones are re-probed on every sweep too:
+// entitlements and allowances change, and a model that was refused yesterday
+// may answer today. Outside free-only mode the old bounded sample applies,
+// since each probe against a paid model costs real money.
 func (g *Gateway) probeTargets(keys map[string]string) []candidate {
+	if g.FreeOnly() {
+		return g.freeProbeTargets(keys)
+	}
 	perProvider := g.cfg.ProbeModelsPerProvider
 	if perProvider < 1 {
 		perProvider = 1
@@ -178,6 +188,74 @@ func (g *Gateway) probeTargets(keys map[string]string) []candidate {
 	return out
 }
 
+// freeProbeTargets covers every known free model at a keyed provider, so the
+// sweep learns exactly which free models answer for this account. Ordering
+// puts confirmed-working models first (cheap re-confirmation), then models
+// never probed, then models that failed before — the ones most likely to
+// have recovered still get retried every sweep, just last within their
+// provider.
+func (g *Gateway) freeProbeTargets(keys map[string]string) []candidate {
+	pool := g.catalog.FreeModels()
+
+	pool = g.catalog.RankForTask(pool, routing.TaskConversation, routing.Objective(g.cfg.RoutingObjective))
+	sort.SliceStable(pool, func(i, j int) bool {
+		return !specialised(pool[i].Model) && specialised(pool[j].Model)
+	})
+
+	byProvider := map[string][]routing.ModelProfile{}
+	var order []string
+	for _, p := range pool {
+		if keys[p.Provider] == "" {
+			continue
+		}
+		if _, seen := byProvider[p.Provider]; !seen {
+			order = append(order, p.Provider)
+		}
+		byProvider[p.Provider] = append(byProvider[p.Provider], p)
+	}
+	sort.Strings(order)
+
+	var out []candidate
+	for _, name := range order {
+		models := byProvider[name]
+		confirmed, unprobed, failed := splitByProbeState(models, g.catalog)
+		for _, p := range append(append(confirmed, unprobed...), failed...) {
+			out = append(out, candidate{provider: p.Provider, model: p.Model})
+		}
+	}
+
+	// Anything an operator marked is probed too, whatever its ranking: those
+	// are the models routing is restricted to, so their health matters most.
+	for _, p := range g.catalog.Discovered() {
+		if keys[p.Provider] == "" || len(g.catalog.TagsFor(p.Provider, p.Model)) == 0 {
+			continue
+		}
+		c := candidate{provider: p.Provider, model: p.Model}
+		if !containsCandidate(out, c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// splitByProbeState groups models into confirmed-working, never-probed, and
+// probed-but-failed (stale refusal still on record). The caller retries all
+// three every sweep; the order just spends the trial completions where they
+// are most likely to confirm availability first.
+func splitByProbeState(models []routing.ModelProfile, catalog *routing.Catalog) (confirmed, unprobed, failed []routing.ModelProfile) {
+	for _, p := range models {
+		switch {
+		case catalog.Confirmed(p.Provider, p.Model):
+			confirmed = append(confirmed, p)
+		case catalog.Probed(p.Provider, p.Model):
+			failed = append(failed, p)
+		default:
+			unprobed = append(unprobed, p)
+		}
+	}
+	return confirmed, unprobed, failed
+}
+
 func containsCandidate(in []candidate, want candidate) bool {
 	for _, c := range in {
 		if c == want {
@@ -194,13 +272,20 @@ func (g *Gateway) unbench(c candidate) {
 	delete(g.bench, benchKey(c))
 }
 
-// LoadConfirmedModels reads the probe results into the catalogue.
+// LoadConfirmedModels reads the probe results into the catalogue. Every
+// attempt — success or refusal — is recorded, so routing can tell "known
+// available" from "watched but refusing" from "never tried".
 func (g *Gateway) LoadConfirmedModels(ctx context.Context) error {
 	confirmed, err := db.ConfirmedModels(ctx, g.db, g.cfg.ProbeFreshness)
 	if err != nil {
 		return err
 	}
+	attempted, err := db.AttemptedModels(ctx, g.db, g.cfg.ProbeFreshness)
+	if err != nil {
+		return err
+	}
 	g.catalog.SetConfirmed(confirmed)
+	g.catalog.MarkProbed(attempted)
 	return nil
 }
 

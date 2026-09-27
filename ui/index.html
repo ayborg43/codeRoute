@@ -118,6 +118,13 @@ textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(
 .pg-meta strong{color:var(--text);font-weight:600}
 .pg-body{padding:.85rem;white-space:pre-wrap;word-break:break-word;font-size:.875rem;line-height:1.6;max-height:26rem;overflow-y:auto}
 .pg-error{padding:.85rem;white-space:pre-wrap;font-size:.8125rem;color:var(--err);line-height:1.6}
+.chat-log{display:flex;flex-direction:column;gap:.6rem;max-height:28rem;overflow-y:auto;padding:.25rem 0}
+.chat-msg{max-width:85%;padding:.6rem .85rem;border-radius:var(--radius-sm);font-size:.875rem;line-height:1.6;white-space:pre-wrap;word-break:break-word;border:1px solid var(--border)}
+.chat-msg.user{align-self:flex-end;background:var(--accent-soft);border-color:var(--accent-border)}
+.chat-msg.assistant{align-self:flex-start;background:var(--surface-2)}
+.chat-msg .chat-meta{display:block;font-size:.6875rem;color:var(--muted);margin-top:.45rem}
+.chat-msg.typing{color:var(--muted);font-style:italic}
+.chat-err{align-self:flex-start;color:var(--err);font-size:.8125rem;white-space:pre-wrap}
 .btn.on{background:var(--ok);border-color:var(--ok);color:#fff}
 .btn.on:hover{filter:brightness(.88)}
 a.console{color:var(--accent);text-decoration:none;font-size:.75rem;font-weight:500}
@@ -252,6 +259,29 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
       <select id="live-pick"></select>
       <span class="chain" id="live-chain"></span>
       <span id="live-routing" style="margin-left:auto"></span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:1.5rem">
+    <h2>Chat</h2>
+    <p class="hint">Chat with any free model. Pick a model or a routing alias
+       (<code>auto</code>, <code>auto:code</code>, <code>auto:chat</code>,
+       <code>auto:free</code>) and the conversation is sent through the gateway
+       on every turn, so failover and model choice work exactly as they do for
+       API callers. Only free models can answer here.</p>
+
+    <div class="row" style="margin-bottom:.6rem">
+      <select id="chat-model" style="min-width:260px"></select>
+      <button class="btn ghost small" id="chat-clear">Clear</button>
+      <span id="chat-status" class="muted" style="font-size:.75rem"></span>
+    </div>
+
+    <div id="chat-log" class="chat-log" aria-live="polite"></div>
+
+    <div class="row" style="margin-top:.6rem">
+      <textarea id="chat-input" rows="3" placeholder="Message a free model…"
+        style="flex:1;min-width:200px"></textarea>
+      <button class="btn" id="chat-send">Send</button>
     </div>
   </div>
 
@@ -1151,6 +1181,94 @@ function renderNewModels() {
     '<td class="muted">' + new Date(m.first_seen).toLocaleString() + '</td></tr>').join('');
 }
 
+// The chat picker lists the free routing aliases plus every free model the
+// providers serve, so a user can chat with any free model. Paid and unpriced
+// models are excluded: the chat endpoint runs in free-only mode and would
+// refuse them.
+async function loadChatModels() {
+  const sel = $('chat-model');
+  if (sel.options.length > 0) return;   // built once; the list is long
+
+  const aliases = ['auto', 'auto:code', 'auto:chat', 'auto:free'];
+  let html = '<optgroup label="Routing">' +
+    aliases.map(a => '<option value="' + a + '">' + a + '</option>').join('') + '</optgroup>';
+
+  try {
+    const d = await api('/api/catalogue?free=true');
+    const byProvider = {};
+    (d.data || []).forEach(m => { (byProvider[m.provider] ||= []).push(m); });
+
+    const groups = Object.keys(byProvider).sort().map(p =>
+      '<optgroup label="' + esc(p) + '">' +
+      byProvider[p].map(m =>
+        '<option value="' + esc(p) + ':' + esc(m.model) + '">' + esc(m.model) + '</option>').join('') +
+      '</optgroup>').join('');
+    if (groups) html += groups;
+    else html += '<optgroup label="Free models"><option value="" disabled>No free models discovered yet — save a provider key</option></optgroup>';
+  } catch (e) { /* the aliases alone are still usable */ }
+
+  sel.innerHTML = html;
+}
+
+let chatHistory = [];
+
+function renderChat() {
+  const log = $('chat-log');
+  log.innerHTML = chatHistory.map(m => {
+    if (m.role === 'error') return '<div class="chat-err">' + esc(m.content) + '</div>';
+    const cls = m.role === 'user' ? 'user' : 'assistant';
+    return '<div class="chat-msg ' + cls + '">' + esc(m.content) +
+      (m.meta ? '<span class="chat-meta">' + esc(m.meta) + '</span>' : '') + '</div>';
+  }).join('');
+  log.scrollTop = log.scrollHeight;
+}
+
+async function sendChat() {
+  const input = $('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  chatHistory.push({role: 'user', content: text});
+  input.value = '';
+  renderChat();
+
+  const sendBtn = $('chat-send');
+  sendBtn.disabled = true;
+  $('chat-status').textContent = 'Sending…';
+
+  chatHistory.push({role: 'assistant', content: '…', meta: '', typing: true});
+  renderChat();
+
+  const body = {
+    model: $('chat-model').value,
+    messages: chatHistory.filter(m => m.role === 'user' || m.role === 'assistant' && !m.typing)
+      .map(m => ({role: m.role, content: m.content})),
+  };
+
+  const started = Date.now();
+  try {
+    const d = await api('/api/chat', {method: 'POST', body: JSON.stringify(body)});
+    chatHistory.pop();
+
+    let meta = d.answered + (d.provider ? ' via ' + d.provider : '') +
+      ' · ' + num(Date.now() - started) + 'ms';
+    if (d.cache_hit) meta += ' · from cache';
+    if (d.requested !== d.answered) meta += ' · asked for ' + d.requested;
+
+    chatHistory.push({role: 'assistant', content: d.content || '(empty reply)', meta: meta});
+    $('chat-status').textContent = '';
+  } catch (e) {
+    chatHistory.pop();
+    if (e instanceof AuthError) { handle(e); }
+    else chatHistory.push({role: 'error', content: e.message});
+    $('chat-status').textContent = '';
+  }
+
+  renderChat();
+  sendBtn.disabled = false;
+  $('chat-input').focus();
+}
+
 // The picker offers the routing aliases first — they are the interesting
 // thing to test — then every model the providers actually serve.
 async function loadPlaygroundModels() {
@@ -1452,7 +1570,7 @@ async function refresh() {
   try {
     banner('');
     await Promise.all([loadActive(), loadStats(), loadSettings(), loadProviders(), loadCatalogue(), loadPlaygroundModels(),
-                       loadScores(), loadNewModels(), loadBlacklist(), loadKeys(), loadModels(), loadUsage()]);
+                       loadChatModels(), loadScores(), loadNewModels(), loadBlacklist(), loadKeys(), loadModels(), loadUsage()]);
   } catch (e) { handle(e); }
 }
 
@@ -1506,6 +1624,16 @@ $('score-task').addEventListener('change', () => loadScores().catch(handle));
 $('live-pick').addEventListener('change', ev => {
   liveModel = ev.currentTarget.value;
   loadActive().catch(handle);
+});
+$('chat-send').addEventListener('click', sendChat);
+$('chat-clear').addEventListener('click', () => {
+  chatHistory = [];
+  renderChat();
+  $('chat-status').textContent = '';
+  $('chat-input').focus();
+});
+$('chat-input').addEventListener('keydown', ev => {
+  if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') sendChat();
 });
 $('pg-send').addEventListener('click', ev => runPlayground(ev.currentTarget));
 // Ctrl/Cmd+Enter sends, so a long prompt does not need a trip to the mouse.

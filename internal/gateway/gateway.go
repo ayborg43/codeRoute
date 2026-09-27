@@ -108,7 +108,9 @@ func New(database *sql.DB, opts Options) (*Gateway, error) {
 // at zero cost.
 func (g *Gateway) FreeOnly() bool { return g.freeOnlyFlag.Load() }
 
-// SetFreeOnly changes the restriction for subsequent requests.
+// SetFreeOnly changes the restriction for subsequent requests. The default is
+// on (see config); an operator can still switch it off, but doing so opts
+// back into paid routing.
 func (g *Gateway) SetFreeOnly(on bool) {
 	if g.freeOnlyFlag.Swap(on) != on {
 		log.Printf("routing: free-only mode %s", map[bool]string{true: "enabled", false: "disabled"}[on])
@@ -488,8 +490,20 @@ func (g *Gateway) planCandidates(req *provider.ChatRequest, keys map[string]stri
 		// A named model that is already free is honoured exactly. Free-only
 		// mode exists to stop spending, not to override a choice that costs
 		// nothing — replacing it would be a surprise with no benefit.
+		// (freeNamed also requires the model to be currently available:
+		// a free model that probes show is refusing traffic falls through
+		// to the error below rather than being attempted anyway.)
 		if named := g.freeNamed(req.Model, keys); len(named) > 0 {
 			return named, task
+		}
+		// Strict free-only: a caller who explicitly names a paid (or
+		// unpriced) model gets no silent substitution — and no fallback
+		// chain either, since the fallbacks are paid models too. Returning
+		// an empty chain makes route() fail via unroutable(), which names
+		// the paid model explicitly (see below).
+		if model := strings.TrimSpace(req.Model); model != "" &&
+			!strings.EqualFold(model, freeSentinel) && !intentFor(model).known {
+			return nil, task
 		}
 		return g.freeCandidates(keys, task, intent), task
 	}
@@ -545,8 +559,9 @@ func (g *Gateway) freeOnly(model string) bool {
 	return g.FreeOnly() || intentFor(model).freeOnly
 }
 
-// freeNamed returns the caller's own model when it is free, so free-only mode
-// substitutes only where the named model would actually have cost something.
+// freeNamed returns the caller's own model when it is free AND currently
+// known available, so free-only mode substitutes only where the named model
+// would actually have cost something or is currently refusing traffic.
 func (g *Gateway) freeNamed(model string, keys map[string]string) []candidate {
 	if model == "" || strings.EqualFold(strings.TrimSpace(model), freeSentinel) {
 		return nil
@@ -555,7 +570,7 @@ func (g *Gateway) freeNamed(model string, keys map[string]string) []candidate {
 	var out []candidate
 	for _, c := range g.filterToKeyed(g.placements(model), keys) {
 		for _, p := range g.catalog.Resolve(c.model) {
-			if p.Provider == c.provider && p.Free() {
+			if p.Provider == c.provider && p.Free() && g.available(c) {
 				out = append(out, c)
 				break
 			}
@@ -564,10 +579,46 @@ func (g *Gateway) freeNamed(model string, keys map[string]string) []candidate {
 	return out
 }
 
-// freeCandidates offers only models published as costing nothing, one per
-// provider so failover moves between vendors rather than retrying one.
+// available reports whether a model may be routed to right now: it must not
+// be benched from real traffic, and once probing has confirmed anything, it
+// must be one of the confirmed-working models. Unavailable models stay out
+// of the chain but are re-probed every sweep, so recovery is automatic.
+func (g *Gateway) available(c candidate) bool {
+	if g.benched(c) {
+		return false
+	}
+	if g.catalog.AnyConfirmed() && !g.catalog.Confirmed(c.provider, c.model) {
+		return false
+	}
+	return true
+}
+
+// namedButUnavailable reports whether the caller named a free model that
+// exists at a keyed provider but is currently refusing traffic (benched from
+// real traffic or unconfirmed while other models are confirmed). Used only
+// to phrase the rejection: paid models get the pricing explanation, refused
+// free models get the recovery one.
+func (g *Gateway) namedButUnavailable(model string) bool {
+	keys, err := g.ConfiguredKeys()
+	if err != nil {
+		return false
+	}
+	for _, c := range g.filterToKeyed(g.placements(model), keys) {
+		for _, p := range g.catalog.Resolve(c.model) {
+			if p.Provider == c.provider && p.Free() && !g.available(c) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// freeCandidates offers only free models known available (confirmed working
+// once any confirmation exists), one per provider so failover moves between
+// vendors rather than retrying one.
 func (g *Gateway) freeCandidates(keys map[string]string, task routing.TaskType, intent sentinelIntent) []candidate {
 	pool := g.restrictToTagged(g.catalog.FreeModels(), task)
+	pool = g.catalog.ConfirmedOnly(pool)
 	pool = g.catalog.RankForTask(pool, task, g.objectiveFor(intent))
 	return g.pickOnePerProvider(g.catalog.PreferConfirmed(pool), keys)
 }
@@ -1100,6 +1151,20 @@ func (g *Gateway) unroutable(req *provider.ChatRequest, keys map[string]string) 
 	}
 
 	if g.freeOnly(req.Model) {
+		// An explicit model name that is not currently routable — paid,
+		// unpriced, or a free model the probes show is refusing traffic —
+		// is rejected by name rather than silently substituted.
+		if model := strings.TrimSpace(req.Model); model != "" && !intentFor(model).known {
+			detail := "this gateway routes to free models only"
+			if g.namedButUnavailable(req.Model) {
+				detail = "that free model is currently refusing traffic; it stays watched and " +
+					"routing will use it again once a probe shows it answering"
+			}
+			return fmt.Errorf("%w: model %q is not available (%s). "+
+				"Free routing only uses free models a probe has shown to answer; "+
+				"ask for %q (or leave the model empty) to let routing pick one",
+				ErrNoProvider, model, detail, freeSentinel)
+		}
 		return fmt.Errorf("%w: no free models are known for %s. Free routing only uses models "+
 			"whose provider publishes a zero price, and none of the configured providers has "+
 			"reported one yet", ErrNoProvider, strings.Join(keyed, ", "))

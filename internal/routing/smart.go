@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coderouter/coderouter/internal/provider"
 )
@@ -116,6 +117,12 @@ type Catalog struct {
 	// it expires.
 	confirmed map[string]bool
 
+	// probedAt records every model a probe has attempted, whether it worked
+	// or not. A model in here but not in confirmed refused the trial
+	// completion — it is watched (re-probed every sweep) so routing notices
+	// the moment it recovers.
+	probedAt map[string]time.Time
+
 	// tags are an operator's own statements about which models suit which
 	// work, keyed by provider/model. Where a task has any tagged model,
 	// routing for that task uses only those — a tag is an instruction, not
@@ -148,6 +155,7 @@ func NewCatalog() *Catalog {
 		discovered: map[string][]ModelProfile{},
 		tags:       map[string][]TaskType{},
 		confirmed:  map[string]bool{},
+		probedAt:   map[string]time.Time{},
 		blacklist:  map[string]bool{},
 	}
 }
@@ -613,11 +621,21 @@ func (c *Catalog) TaggedCount() map[TaskType]int {
 }
 
 // SetConfirmed records which models a probe has shown to work for this
-// account, keyed provider/model.
+// account, keyed provider/model, plus when every model was last attempted
+// (working or not) so routing can tell "never probed" from "probed and
+// refused". The attempted set lets free-only routing route solely to models
+// known available while still watching the refused ones for recovery.
 func (c *Catalog) SetConfirmed(confirmed map[string]bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	now := time.Now()
+	if c.probedAt == nil {
+		c.probedAt = map[string]time.Time{}
+	}
+	for k := range confirmed {
+		c.probedAt[k] = now
+	}
 	c.confirmed = make(map[string]bool, len(confirmed))
 	for k, v := range confirmed {
 		if v {
@@ -626,11 +644,38 @@ func (c *Catalog) SetConfirmed(confirmed map[string]bool) {
 	}
 }
 
+// MarkProbed records an attempt batch (e.g. a sweep that found nothing
+// working): the models were tried, so they count as watched-but-unavailable
+// rather than never-probed.
+func (c *Catalog) MarkProbed(keys []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.probedAt == nil {
+		c.probedAt = map[string]time.Time{}
+	}
+	now := time.Now()
+	for _, k := range keys {
+		c.probedAt[k] = now
+	}
+}
+
 // Confirmed reports whether a probe has recently shown this model to work.
 func (c *Catalog) Confirmed(providerName, model string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.confirmed[TagKey(providerName, model)]
+}
+
+// Probed reports whether a probe has attempted this model (working or not).
+// A probed-but-unconfirmed model refused the trial completion: routing keeps
+// it out of the chain but the sweeps keep retrying it, so recovery is
+// noticed without any operator action.
+func (c *Catalog) Probed(providerName, model string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	_, ok := c.probedAt[TagKey(providerName, model)]
+	return ok
 }
 
 // AnyConfirmed reports whether probing has established anything at all.
@@ -691,5 +736,25 @@ func (c *Catalog) PreferConfirmed(pool []ModelProfile) []ModelProfile {
 		b := c.Confirmed(out[j].Provider, out[j].Model)
 		return a && !b
 	})
+	return out
+}
+
+// ConfirmedOnly narrows a pool to models a probe has shown to work, where
+// any such model exists. Once at least one model is confirmed, the refused
+// ones are kept out of routing (but stay watched: every sweep re-probes
+// them, and a recovered model re-enters automatically). Until anything is
+// confirmed the pool is returned untouched, so a fresh deployment routes on
+// price rather than refusing everything while the first sweep is pending.
+func (c *Catalog) ConfirmedOnly(pool []ModelProfile) []ModelProfile {
+	if !c.AnyConfirmed() {
+		return pool
+	}
+
+	out := make([]ModelProfile, 0, len(pool))
+	for _, p := range pool {
+		if c.Confirmed(p.Provider, p.Model) {
+			out = append(out, p)
+		}
+	}
 	return out
 }

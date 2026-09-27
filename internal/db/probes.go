@@ -82,6 +82,29 @@ func ConfirmedModels(ctx context.Context, database *sql.DB, within time.Duration
 	return out, rows.Err()
 }
 
+// AttemptedModels returns every model probed within the window, working or
+// not — the "watched" set routing keeps retrying until availability returns.
+func AttemptedModels(ctx context.Context, database *sql.DB, within time.Duration) ([]string, error) {
+	rows, err := database.QueryContext(ctx,
+		`SELECT provider, model FROM model_probes
+		 WHERE checked_at > NOW() - $1::interval`,
+		intervalArg(within))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var p, m string
+		if err := rows.Scan(&p, &m); err != nil {
+			return nil, err
+		}
+		out = append(out, TagKey(p, m))
+	}
+	return out, rows.Err()
+}
+
 // ForgetProbes drops a provider's results, for when its key changes and its
 // entitlements may have changed with it.
 func ForgetProbes(ctx context.Context, database *sql.DB, providerName string) error {
