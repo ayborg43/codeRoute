@@ -124,7 +124,12 @@ type NewModel struct {
 }
 
 // RecentlyAddedModels lists what has appeared within the window, newest first.
-func RecentlyAddedModels(ctx context.Context, database *sql.DB, since time.Duration, limit int) ([]NewModel, error) {
+//
+// freeOnly restricts the listing to models published at zero cost, which is
+// what the dashboard shows: a deployment that routes to free models only has
+// no use for a new priced model, and reading it out of the table rather than
+// filtering afterwards keeps the limit counting the rows that will be shown.
+func RecentlyAddedModels(ctx context.Context, database *sql.DB, since time.Duration, limit int, freeOnly bool) ([]NewModel, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -135,9 +140,11 @@ func RecentlyAddedModels(ctx context.Context, database *sql.DB, since time.Durat
 		        first_seen
 		 FROM discovered_models
 		 WHERE first_seen > NOW() - $1::interval
+		   AND (NOT $3::boolean
+		        OR (price_known AND input_cost_per_1m = 0 AND output_cost_per_1m = 0))
 		 ORDER BY first_seen DESC
 		 LIMIT $2`,
-		intervalArg(since), limit)
+		intervalArg(since), limit, freeOnly)
 	if err != nil {
 		return nil, err
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/coderouter/coderouter/internal/config"
 	"github.com/coderouter/coderouter/internal/gateway"
 	"github.com/coderouter/coderouter/internal/iot"
+	"github.com/coderouter/coderouter/internal/provider"
 	"github.com/coderouter/coderouter/internal/routing"
 )
 
@@ -456,5 +457,68 @@ func TestCatalogueCapIsANoOpBelowTheLimit(t *testing.T) {
 	pool := []routing.ModelProfile{{Provider: "a", Model: "one"}, {Provider: "b", Model: "two"}}
 	if got := shareAcrossProviders(pool, 400); len(got) != 2 {
 		t.Errorf("got %d rows from a 2-row pool", len(got))
+	}
+}
+
+// The dashboard is a free-models dashboard, so the status picker must not offer
+// a name this deployment would substitute away from: planning a chain for it
+// would preview something that never runs.
+func TestRoutableChoicesOfferOnlyModelsThatAreFree(t *testing.T) {
+	catalog := routing.NewCatalog()
+	catalog.SetDiscovered("p", []provider.DiscoveredModel{
+		{Provider: "p", Model: "priced", PriceKnown: true, InputCostPer1M: 1, OutputCostPer1M: 2},
+		{Provider: "p", Model: "gratis", PriceKnown: true},
+	})
+
+	// The built-in default model is priced, and is not discovered here.
+	got := routableChoices(catalog, "gpt-4o-mini")
+	for _, name := range got {
+		if name == "gpt-4o-mini" {
+			t.Errorf("a priced default model was offered: %v", got)
+		}
+	}
+
+	// The aliases stay: they ask the gateway to choose, and it chooses from
+	// the free pool.
+	var hasAuto bool
+	for _, name := range got {
+		if name == "auto" {
+			hasAuto = true
+		}
+	}
+	if !hasAuto {
+		t.Errorf("the routing aliases vanished: %v", got)
+	}
+
+	// A default that is free leads, because that is what a chain is planned
+	// for by default.
+	got = routableChoices(catalog, "gratis")
+	if len(got) == 0 || got[0] != "gratis" {
+		t.Errorf("a free default model was dropped: %v", got)
+	}
+}
+
+// Free means a published zero price, and nothing else. An unpriced model may
+// well cost money, which is the whole reason it is never treated as free.
+func TestFreeModelSetsExcludeAnythingPricedOrUnpriced(t *testing.T) {
+	catalog := routing.NewCatalog()
+	catalog.SetDiscovered("p", []provider.DiscoveredModel{
+		{Provider: "p", Model: "gratis", PriceKnown: true},
+		{Provider: "p", Model: "priced", PriceKnown: true, InputCostPer1M: 0.5, OutputCostPer1M: 1.5},
+		{Provider: "p", Model: "unpriced"},
+	})
+
+	free := freeModelKeys(catalog)
+	names := freeModelNames(catalog)
+	if !free[routing.ObservationKey("p", "gratis")] || !names["gratis"] {
+		t.Error("a zero-priced model was not treated as free")
+	}
+	for _, model := range []string{"priced", "unpriced"} {
+		if free[routing.ObservationKey("p", model)] {
+			t.Errorf("%s was treated as free as a placement", routing.ObservationKey("p", model))
+		}
+		if names[model] {
+			t.Errorf("%q was treated as free by name", model)
+		}
 	}
 }

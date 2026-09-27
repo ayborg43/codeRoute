@@ -60,23 +60,23 @@ into their own formats. Hosted tools (`web_search`, `file_search`, …) and
 | `GET /api/stats` | Traffic, spend, cache hit rate over `?window=` |
 | `GET /api/usage` | Recent calls with key, model, tokens, cost |
 | `GET /api/keys` | Client keys, with when each was created and last used |
-| `GET /api/catalogue` | Every model the providers serve; `?free=true`, `?provider=` to narrow |
+| `GET /api/catalogue` | Every free model the providers serve; `?provider=` to narrow |
 | `POST /api/discover` | Re-read every provider's model list now |
 | `POST /api/probe` | Send a trial completion to each candidate model now |
 | `GET /api/probes` | What the last sweep found |
 | `GET /api/route?model=` | The chain a request would follow, without sending one |
 | `GET /api/active` | Which model is answering now, which answered last, and what the next request would reach for |
-| `GET /api/scores?task=` | What this deployment's traffic says about each model |
+| `GET /api/scores?task=` | What this deployment's traffic says about each free model |
 | `GET` / `PUT /v1/admin/model-tags` | Mark which models are for which kind of work |
 | `GET` / `POST /v1/admin/users` | List or create operator accounts |
 | `PATCH /v1/admin/users/{id}` | Disable an account, or set its password |
 | `POST /api/login` / `logout` | Start or end a dashboard session |
 | `GET /api/me` | Who the current session belongs to |
 | `POST /api/password` | Change your own password |
-| `GET /api/new-models` | Models that have appeared since the window began |
+| `GET /api/new-models` | Free models that have appeared since the window began |
 | `GET` / `PUT /api/settings` | Read or change the free-only switch at runtime |
 | `POST /api/playground` | Send a prompt through the gateway and see what answered |
-| `GET /api/models` | Per-model traffic, paired with the routing catalogue |
+| `GET /api/models` | Per-model traffic for free models, paired with the routing catalogue |
 
 ### Public
 
@@ -105,7 +105,7 @@ into their own formats. Hosted tools (`web_search`, `file_search`, …) and
 | `ROUTING_MODE` | `auto` | `auto` (route only when the client asks for `auto`), `always`, `off` |
 | `ROUTING_OBJECTIVE` | `balanced` | `balanced`, `latency`, or `cost` |
 | `PROVIDERS` | all presets | Narrow the provider list, or add one with `name=url` |
-| `FREE_ONLY` | `false` | Initial free-only setting; the dashboard button overrides it |
+| `FREE_ONLY` | `true` | Initial free-only setting; the dashboard button overrides it |
 | `DISCOVERY_INTERVAL` | `1h` | How often each provider is asked what it serves |
 | `MODEL_CATALOG` / `MODEL_CATALOG_PATH` | built-ins | Override or extend the curated catalogue |
 | `LATENCY_FEEDBACK_INTERVAL` | `5m` | How often observed behaviour is folded back into ranking; `0` disables |
@@ -248,6 +248,12 @@ deployment-wide rule there is a button on the dashboard — it takes effect on
 the next request and is written to the database, so a restart does not undo it.
 `FREE_ONLY=true` sets the starting value for a fresh deployment; once the
 button has been used, the stored value wins.
+
+The dashboard follows the same rule without asking: **its model tables only
+list free models.** The available-models table, the new arrivals, the scores,
+the per-model traffic, the playground picker and the status picker all drop a
+priced or unpriced model, because routing would substitute away from it — it
+would be a name nobody on the page can do anything with.
 
 Turning it on is refused while no free models are known, since it would
 otherwise refuse every request and look like a broken gateway.

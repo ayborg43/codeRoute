@@ -702,7 +702,7 @@ func TestFirstSeenSurvivesRefreshes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	recent, err := RecentlyAddedModels(ctx, database, 24*time.Hour, 50)
+	recent, err := RecentlyAddedModels(ctx, database, 24*time.Hour, 50, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -715,12 +715,45 @@ func TestFirstSeenSurvivesRefreshes(t *testing.T) {
 	if _, err := ReplaceDiscoveredModels(ctx, database, "p", models); err != nil {
 		t.Fatal(err)
 	}
-	recent, err = RecentlyAddedModels(ctx, database, 24*time.Hour, 50)
+	recent, err = RecentlyAddedModels(ctx, database, 24*time.Hour, 50, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(recent) != 1 || recent[0].Model != "fresh" {
 		t.Errorf("recent = %+v, want just the new model", recent)
+	}
+}
+
+// The dashboard shows what this deployment can actually route to, so a model
+// with a price — or one whose price nobody publishes — must not be listed as a
+// new arrival regardless of how recently it was seen.
+func TestRecentlyAddedModelsCanListFreeOnesOnly(t *testing.T) {
+	database := newTestDB(t)
+	ctx := context.Background()
+
+	models := []provider.DiscoveredModel{
+		{Provider: "p", Model: "gratis", PriceKnown: true},
+		{Provider: "p", Model: "priced", PriceKnown: true, InputCostPer1M: 1, OutputCostPer1M: 2},
+		{Provider: "p", Model: "unpriced"},
+	}
+	if _, err := ReplaceDiscoveredModels(ctx, database, "p", models); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := RecentlyAddedModels(ctx, database, 24*time.Hour, 50, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("unfiltered listing = %d rows, want all three", len(all))
+	}
+
+	free, err := RecentlyAddedModels(ctx, database, 24*time.Hour, 50, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(free) != 1 || free[0].Model != "gratis" || !free[0].Free {
+		t.Fatalf("free-only listing = %+v, want just the zero-priced model", free)
 	}
 }
 

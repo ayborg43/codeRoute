@@ -182,7 +182,7 @@ func Load() *Config {
 			"anthropic": os.Getenv("ANTHROPIC_BASE_URL"),
 			"google":    os.Getenv("GOOGLE_BASE_URL"),
 		},
-		Providers:           loadProviders(),
+		Providers: loadProviders(),
 		// Free-only by default: this project only routes to free models
 		// unless an operator explicitly opts out at runtime.
 		FreeOnly:            getEnvBool("FREE_ONLY", true),

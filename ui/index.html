@@ -109,8 +109,6 @@ tbody tr:last-child td{border-bottom:none}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
 .btn.danger{background:var(--err-soft);border-color:var(--err-border);color:var(--err-deep);box-shadow:none}
 .btn.danger:hover{background:var(--err);border-color:var(--err);color:#fff}
-.check{display:flex;align-items:center;gap:.45rem;font-size:.8125rem;color:var(--text-2);cursor:pointer}
-.check input{width:auto}
 textarea{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:var(--radius-sm);padding:.6rem .75rem;font-family:inherit;font-size:.875rem;line-height:1.5;resize:vertical}
 textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 .pg-result{margin-top:.9rem;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden}
@@ -191,10 +189,9 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
   #pg-model{min-width:0;width:100%}
   .gate{margin:2.5rem 1rem;padding:1.75rem 1.35rem}
   .live-next select{font-size:16px;padding:.45rem 1.9rem .45rem .7rem}
-  /* Thumb-sized: the mark buttons and the free-only box are otherwise around
+  /* Thumb-sized: the mark buttons are otherwise around
      20px, which is a miss as often as a hit. */
   .tagbtn{padding:.35rem .6rem;font-size:.75rem}
-  .check input{width:18px;height:18px}
   .live-model{font-size:1.15rem}
   .live-extra{width:100%;margin-left:0}
   #live-routing{margin-left:0!important}
@@ -288,8 +285,10 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
   <div class="card" style="margin-bottom:1.5rem">
     <h2>Playground</h2>
     <p class="hint">Send a prompt through the gateway and see which model
-       actually answered, what it cost and how long it took. Requests here are
-       attributed to no client key, so they will not distort anyone&rsquo;s usage.</p>
+       actually answered, what it cost and how long it took. The picker lists
+       the free models and the routing aliases, because those are the only
+       things this deployment will run. Requests here are attributed to no
+       client key, so they will not distort anyone&rsquo;s usage.</p>
 
     <div class="row" style="margin-bottom:.6rem">
       <select id="pg-model" style="min-width:260px"></select>
@@ -337,10 +336,12 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
 
   <div class="card" style="margin-top:1.5rem">
     <h2>Available Models</h2>
-    <p class="hint">What the configured providers report they serve. A model
-       counts as free only when its provider publishes a zero price &mdash;
-       an unpriced model is never assumed free, which is what keeps
-       <code>auto:free</code> from quietly spending money.<br>
+    <p class="hint">The <strong>free</strong> models the configured providers
+       report they serve &mdash; the only ones this gateway routes to, so a
+       priced or unpriced model is not listed here. A model counts as free only
+       when its provider publishes a zero price; an unpriced model is never
+       assumed free, which is what keeps <code>auto:free</code> from quietly
+       spending money.<br>
        <strong>Confirmed</strong> means a trial completion succeeded recently,
        so routing reaches for it first. Unchecked is not the same as broken.<br>
        <strong>Use for</strong> marks a model for a kind of work. Once any
@@ -352,7 +353,6 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
       <span id="free-only-state" class="muted" style="font-size:.75rem"></span>
     </div>
     <div class="row" style="margin-bottom:.5rem">
-      <label class="check"><input type="checkbox" id="free-only-view"> Free models only</label>
       <select id="provider-filter"><option value="">All providers</option></select>
       <input id="model-filter" placeholder="Filter by name" style="width:200px">
       <button class="btn ghost small" id="rediscover">Refresh from providers</button>
@@ -373,7 +373,8 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
     <p class="hint">Measured from this deployment&rsquo;s own traffic &mdash; whether
        calls succeed and how fast they return. <strong>Not a measure of answer
        quality</strong>, which the gateway never observes. Lower score is better;
-       routing uses it to prefer models that work.</p>
+       routing uses it to prefer models that work. Free models only: a model this
+       gateway will not route to has nothing to say about it.</p>
     <div class="row" style="margin-bottom:.5rem">
       <select id="score-task">
         <option value="conversation">Ranked for chat</option>
@@ -393,7 +394,8 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
   <div class="card" style="margin-top:1.5rem">
     <h2>Recently Added Models</h2>
     <p class="hint">Providers are re-read on a schedule; anything that has
-       appeared since is listed here.</p>
+       appeared since is listed here. Free models only &mdash; a newly published
+       price list is not a reason to route to something that costs money.</p>
     <div class="scroll">
       <table>
         <thead><tr><th>Model</th><th>Provider</th><th>First seen</th></tr></thead>
@@ -438,6 +440,9 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
 
   <div class="card" style="margin-top:1.5rem">
     <h2>Models</h2>
+    <p class="hint">Per-model traffic over the window. Free models only, so a
+       model that stopped being free disappears from here rather than sitting at
+       the bottom of the table.</p>
     <div class="scroll">
       <table>
         <thead><tr><th>Model</th><th>Provider</th><th>Requests</th><th>Tokens</th><th>Spend</th><th>Latency (est → observed)</th></tr></thead>
@@ -912,7 +917,7 @@ async function loadSettings() {
 
   $('free-only-state').textContent = freeOnly
     ? 'Requests are restricted to models published at zero cost (' + num(d.free_models) + ' known).'
-    : 'Requests may use any model, priced or not. ' + num(d.free_models) + ' free models are available.';
+    : 'Requests may use any model, priced or not — every table below lists free models only (' + num(d.free_models) + ' known).';
 }
 
 async function toggleFreeOnly(button) {
@@ -945,7 +950,6 @@ async function toggleFreeOnly(button) {
 
 async function loadCatalogue() {
   const params = new URLSearchParams();
-  if ($('free-only-view').checked) params.set('free', 'true');
   const prov = $('provider-filter').value;
   if (prov) params.set('provider', prov);
 
@@ -960,10 +964,9 @@ async function loadCatalogue() {
 
   $('catalogue-summary').textContent =
     d.total === 0
-      ? ($('free-only-view').checked ? 'no free models discovered' : 'no models discovered yet — save a provider key')
-      : num(d.total) + ($('free-only-view').checked ? ' free' : '') + ' models' +
-        (d.truncated ? ' (showing ' + num(catalogueRows.length) + ', shared across providers)' : '') +
-        (d.free_only ? ' · free-only mode is on' : '');
+      ? 'no free models discovered yet — save a provider key'
+      : num(d.total) + ' free models' +
+        (d.truncated ? ' (showing ' + num(catalogueRows.length) + ', shared across providers)' : '');
 
   renderCatalogue();
 }
@@ -1116,7 +1119,8 @@ async function rediscover(button) {
     ? '<strong class="status-ok">' + esc(parts.join(', ')) + '.</strong>'
     : 'Nothing is marked yet, so routing infers fitness from model names.';
 
-  $('catalogue-summary').textContent = num(d.models) + ' models, ' + num(d.free) + ' free';
+  $('catalogue-summary').textContent = num(d.free) + ' free models found' +
+    (d.models > d.free ? ' (of ' + num(d.models) + ' served)' : '');
   } catch (e) { handle(e); }
   button.textContent = label;
   button.disabled = false;
@@ -1184,7 +1188,7 @@ function renderNewModels() {
 // The chat picker lists the free routing aliases plus every free model the
 // providers serve, so a user can chat with any free model. Paid and unpriced
 // models are excluded: the chat endpoint runs in free-only mode and would
-// refuse them.
+// refuse them, and the catalogue only lists free models anyway.
 async function loadChatModels() {
   const sel = $('chat-model');
   if (sel.options.length > 0) return;   // built once; the list is long
@@ -1194,7 +1198,7 @@ async function loadChatModels() {
     aliases.map(a => '<option value="' + a + '">' + a + '</option>').join('') + '</optgroup>';
 
   try {
-    const d = await api('/api/catalogue?free=true');
+    const d = await api('/api/catalogue');
     const byProvider = {};
     (d.data || []).forEach(m => { (byProvider[m.provider] ||= []).push(m); });
 
@@ -1270,7 +1274,10 @@ async function sendChat() {
 }
 
 // The picker offers the routing aliases first — they are the interesting
-// thing to test — then every model the providers actually serve.
+// thing to test — then every free model the providers serve. Priced and
+// unpriced models are left out: they cannot be routed to here, so offering one
+// would only send a request that comes back refused or substituted. The
+// catalogue only lists free models, so no extra filter is needed.
 async function loadPlaygroundModels() {
   const sel = $('pg-model');
   if (sel.options.length > 0) return;   // built once; the list is long
@@ -1507,8 +1514,11 @@ function renderModels() {
     // it says nothing; show what the replay actually cost in time.
     let latency = Math.round(m.latency_ms) + 'ms';
     if (c && m.provider !== 'cache') {
-      latency = c.estimated_ms + 'ms → ' +
-        (c.observed_ms ? c.observed_ms + 'ms' : '<span class="muted">not yet measured</span>');
+      const measured = c.observed_ms ? c.observed_ms + 'ms' : '<span class="muted">not yet measured</span>';
+      // Free models are discovered rather than curated, so most carry no
+      // latency estimate at all; an "est → observed" pair would read "0ms →"
+      // and mean nothing.
+      latency = c.estimated_ms ? c.estimated_ms + 'ms → ' + measured : measured;
     }
     return '<tr><td>' + esc(m.model) + '</td><td>' + esc(m.provider) + '</td><td>' +
       num(m.requests) + '</td><td>' + num(m.tokens) + '</td><td>' + money(m.cost_usd) +
@@ -1617,7 +1627,6 @@ $('signout').addEventListener('click', async () => {
 });
 $('window').addEventListener('change', () => { modelsPage = 1; newModelsPage = 1; refresh(); });
 $('create-key').addEventListener('click', createKey);
-$('free-only-view').addEventListener('change', () => { cataloguePage = 1; loadCatalogue().catch(handle); });
 $('provider-filter').addEventListener('change', () => { cataloguePage = 1; loadCatalogue().catch(handle); });
 $('free-only-toggle').addEventListener('click', ev => toggleFreeOnly(ev.currentTarget));
 $('score-task').addEventListener('change', () => loadScores().catch(handle));

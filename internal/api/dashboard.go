@@ -130,6 +130,10 @@ func (h *Handler) dashboardKeys(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": keys})
 }
 
+// dashboardModels pairs measured traffic with the catalogue, so a model whose
+// latency has drifted from its estimate is visible. Free models only, on both
+// halves: the curated profiles are mostly priced, and listing them would put
+// models in the table that this deployment will never route to.
 func (h *Handler) dashboardModels(w http.ResponseWriter, r *http.Request) {
 	if !h.dashboardAuthorized(w, r) {
 		return
@@ -141,10 +145,28 @@ func (h *Handler) dashboardModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pair observed traffic with the catalogue, so a model whose measured
-	// latency has drifted from its estimate is visible.
+	catalog := h.gw.Catalog()
+	free := freeModelKeys(catalog)
+	freeNames := freeModelNames(catalog)
+
+	usage := make([]db.ModelBreakdown, 0, len(breakdown))
+	for _, m := range breakdown {
+		// A cache hit is recorded against a provider of its own, so it matches
+		// on the model name; a real call matches on the placement that served
+		// it.
+		if free[routing.ObservationKey(m.Provider, m.Model)] || freeNames[m.Model] {
+			usage = append(usage, m)
+		}
+	}
+
 	catalogue := []map[string]any{}
-	for _, p := range h.gw.Catalog().Profiles() {
+	seen := map[string]bool{}
+	for _, p := range catalog.FreeModels() {
+		key := routing.ObservationKey(p.Provider, p.Model)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		catalogue = append(catalogue, map[string]any{
 			"model":              p.Model,
 			"provider":           p.Provider,
@@ -156,23 +178,25 @@ func (h *Handler) dashboardModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"usage":     breakdown,
+		"usage":     usage,
 		"catalogue": catalogue,
 	})
 }
 
 // dashboardCatalogue lists what the configured providers actually serve, so an
 // operator can see which models are reachable and which of them are free.
+//
+// Only free models are listed. This deployment routes to free models only —
+// everything else is substituted away or refused — so a priced or unpriced row
+// would be a name nobody could act on, and marking or blacklisting it would
+// change nothing. The table is the lineup, not the provider's price list.
 func (h *Handler) dashboardCatalogue(w http.ResponseWriter, r *http.Request) {
 	if !h.dashboardAuthorized(w, r) {
 		return
 	}
 
 	catalog := h.gw.Catalog()
-	pool := catalog.Discovered()
-	if r.URL.Query().Get("free") == "true" {
-		pool = catalog.FreeModels()
-	}
+	pool := catalog.FreeModels()
 
 	if want := r.URL.Query().Get("provider"); want != "" {
 		filtered := pool[:0:0]
@@ -254,14 +278,15 @@ func (h *Handler) dashboardCatalogue(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// dashboardNewModels lists models that have appeared since the window began,
-// which is what an operator watching for a new release actually wants.
+// dashboardNewModels lists what has appeared since the window began, which is
+// what an operator watching for a new release actually wants. Free models only:
+// a new priced model is not something this deployment can route to.
 func (h *Handler) dashboardNewModels(w http.ResponseWriter, r *http.Request) {
 	if !h.dashboardAuthorized(w, r) {
 		return
 	}
 
-	added, err := db.RecentlyAddedModels(r.Context(), h.db, window(r), 100)
+	added, err := db.RecentlyAddedModels(r.Context(), h.db, window(r), 100, true)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error(), "internal_error")
 		return
@@ -273,6 +298,10 @@ func (h *Handler) dashboardNewModels(w http.ResponseWriter, r *http.Request) {
 // dashboardScores reports what this deployment's own traffic says about each
 // model. Everything here is measured; nothing is a judgement of answer
 // quality, which the gateway has no way to observe.
+//
+// Only free models are scored. Traffic recorded before free-only mode was
+// turned on can name models this deployment will not route to again, and a
+// ranking of those would be advice nobody can follow.
 func (h *Handler) dashboardScores(w http.ResponseWriter, r *http.Request) {
 	if !h.dashboardAuthorized(w, r) {
 		return
@@ -290,13 +319,19 @@ func (h *Handler) dashboardScores(w http.ResponseWriter, r *http.Request) {
 	}
 
 	catalog := h.gw.Catalog()
+	free := freeModelKeys(catalog)
 	byKey := map[string]routing.ModelProfile{}
-	for _, p := range append(catalog.Discovered(), catalog.Profiles()...) {
+	for _, p := range catalog.FreeModels() {
 		byKey[routing.ObservationKey(p.Provider, p.Model)] = p
 	}
 
 	data := make([]modelScore, 0, len(observed))
 	for _, o := range observed {
+		key := routing.ObservationKey(o.Provider, o.Model)
+		if !free[key] {
+			continue
+		}
+
 		rel := routing.Reliability{
 			Attempts: o.Attempts, Successes: o.Successes, MedianLatencyMs: o.MedianLatencyMs,
 		}
@@ -312,7 +347,7 @@ func (h *Handler) dashboardScores(w http.ResponseWriter, r *http.Request) {
 			SuitsTask:   "unknown",
 		}
 
-		if p, ok := byKey[routing.ObservationKey(o.Provider, o.Model)]; ok {
+		if p, ok := byKey[key]; ok {
 			p.Reliability = rel
 			score := routing.ScoreWithEvidence(p, task, routing.Objective(h.cfg.RoutingObjective))
 			entry.Score = &score
@@ -533,7 +568,7 @@ func (h *Handler) dashboardActive(w http.ResponseWriter, r *http.Request) {
 			"default_model": h.cfg.DefaultModel,
 			"router_model":  h.cfg.RouterModel,
 			"free_only":     h.gw.FreeOnly(),
-			"choices":       routableChoices(h.cfg.DefaultModel),
+			"choices":       routableChoices(h.gw.Catalog(), h.cfg.DefaultModel),
 		},
 	}
 	if live.Last != nil {
@@ -567,10 +602,20 @@ func (h *Handler) dashboardActive(w http.ResponseWriter, r *http.Request) {
 // model an unnamed request falls back to, plus every routing alias. Anything
 // else a caller might name is in the catalogue, which is far too long for a
 // dropdown on a status card.
-func routableChoices(defaultModel string) []string {
+//
+// The fallback is offered only when some provider serves it free. A priced
+// default would put a name in the picker that free-only routing substitutes
+// away from, so the chain it previewed would never be the one that ran.
+func routableChoices(catalog *routing.Catalog, defaultModel string) []string {
 	choices := []string{}
 	seen := map[string]bool{}
-	for _, name := range append([]string{defaultModel}, gateway.Sentinels()...) {
+
+	names := gateway.Sentinels()
+	if freeModelNames(catalog)[defaultModel] {
+		names = append([]string{defaultModel}, names...)
+	}
+
+	for _, name := range names {
 		if name == "" || seen[name] {
 			continue
 		}
@@ -578,6 +623,30 @@ func routableChoices(defaultModel string) []string {
 		choices = append(choices, name)
 	}
 	return choices
+}
+
+// freeModelKeys indexes the free models by provider and model, so a view built
+// from measured traffic or from the catalogue can drop anything that is not
+// free. Keyed the same way as an observation, since that is what it is used
+// against.
+func freeModelKeys(catalog *routing.Catalog) map[string]bool {
+	free := map[string]bool{}
+	for _, p := range catalog.FreeModels() {
+		free[routing.ObservationKey(p.Provider, p.Model)] = true
+	}
+	return free
+}
+
+// freeModelNames is the set of model names some provider serves free. It is for
+// rows that are not tied to a placement: a cache hit is recorded against a
+// provider of its own, and a name can be free at one provider and priced at
+// another.
+func freeModelNames(catalog *routing.Catalog) map[string]bool {
+	names := map[string]bool{}
+	for _, p := range catalog.FreeModels() {
+		names[p.Model] = true
+	}
+	return names
 }
 
 // shareAcrossProviders takes a roughly equal number from each provider,

@@ -17,6 +17,7 @@ import (
 	"github.com/coderouter/coderouter/internal/db"
 	"github.com/coderouter/coderouter/internal/gateway"
 	"github.com/coderouter/coderouter/internal/iot"
+	"github.com/coderouter/coderouter/internal/provider"
 	"github.com/coderouter/coderouter/migrations"
 )
 
@@ -24,12 +25,22 @@ import (
 // TEST_DATABASE_URL. Without that variable every test here skips.
 func liveHandler(t *testing.T) (http.Handler, *sql.DB, *config.Config) {
 	t.Helper()
-	return liveHandlerWith(t, nil)
+	h, database, cfg, _ := liveWorld(t, nil)
+	return h, database, cfg
 }
 
 // liveHandlerWith is liveHandler with a hook for tests that need to redirect
 // the gateway at a stand-in upstream.
 func liveHandlerWith(t *testing.T, adjust func(*config.Config)) (http.Handler, *sql.DB, *config.Config) {
+	t.Helper()
+	h, database, cfg, _ := liveWorld(t, adjust)
+	return h, database, cfg
+}
+
+// liveWorld is the setup those two share. Answering with the gateway as well is
+// what lets a test seed the state it holds in memory — the catalogue, say —
+// rather than only what is in the database.
+func liveWorld(t *testing.T, adjust func(*config.Config)) (http.Handler, *sql.DB, *config.Config, *gateway.Gateway) {
 	t.Helper()
 
 	url := os.Getenv("TEST_DATABASE_URL")
@@ -67,7 +78,7 @@ func liveHandlerWith(t *testing.T, adjust func(*config.Config)) (http.Handler, *
 	}
 	bridge := iot.NewBridge(iot.Config{}, gw, iot.NewStore(database))
 
-	return NewHandler(gw, database, cfg, bridge), database, cfg
+	return NewHandler(gw, database, cfg, bridge), database, cfg, gw
 }
 
 func decode(t *testing.T, rec *httptest.ResponseRecorder, target any) {
@@ -120,32 +131,139 @@ func TestDashboardReportsRealNumbers(t *testing.T) {
 	}
 }
 
-func TestDashboardModelsPairsUsageWithTheCatalogue(t *testing.T) {
-	h, _, _ := liveHandler(t)
+// The dashboard is a free-models dashboard: every table on it lists what this
+// deployment can actually route to. A priced model, or one whose price nobody
+// publishes, must not turn up in the catalogue, in the new arrivals, in the
+// per-model traffic, in the scores, or in the picker — an operator cannot act
+// on any of it, and free-only routing substitutes away from it.
+func TestDashboardShowsFreeModelsOnly(t *testing.T) {
+	h, database, _, gw := liveWorld(t, nil)
+	ctx := context.Background()
 
-	rec := do(t, h, http.MethodGet, "/api/models", testAdminToken, "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("= %d: %s", rec.Code, rec.Body.String())
+	if _, err := db.ReplaceDiscoveredModels(ctx, database, "openai", []provider.DiscoveredModel{
+		{Provider: "openai", Model: "gratis", PriceKnown: true},
+		{Provider: "openai", Model: "priced", PriceKnown: true, InputCostPer1M: 1, OutputCostPer1M: 2},
+		{Provider: "openai", Model: "unpriced"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.LoadDiscoveredModels(ctx); err != nil {
+		t.Fatalf("loading the catalogue: %v", err)
 	}
 
-	var body struct {
-		Usage     []db.ModelBreakdown `json:"usage"`
-		Catalogue []struct {
-			Model       string `json:"model"`
-			EstimatedMs int    `json:"estimated_ms"`
-			ObservedMs  int    `json:"observed_ms"`
-		} `json:"catalogue"`
-	}
-	decode(t, rec, &body)
-
-	if len(body.Catalogue) == 0 {
-		t.Fatal("the catalogue came back empty")
-	}
-	for _, c := range body.Catalogue {
-		if c.EstimatedMs <= 0 {
-			t.Errorf("catalogue entry %q has no latency estimate", c.Model)
+	// Traffic to all three, as if free-only mode had been switched on after
+	// the priced two were already in use.
+	for _, model := range []string{"gratis", "priced", "unpriced"} {
+		if _, err := database.Exec(
+			`INSERT INTO usage_logs (model, tokens_in, tokens_out, latency_ms, cost_usd, provider, status, task, cache_hit)
+			 VALUES ($1,10,10,100,0.01,'openai','success','conversation',FALSE)`, model); err != nil {
+			t.Fatal(err)
 		}
 	}
+
+	t.Run("catalogue", func(t *testing.T) {
+		var body struct {
+			Data []struct {
+				Model string `json:"model"`
+				Free  bool   `json:"free"`
+			} `json:"data"`
+		}
+		rec := do(t, h, http.MethodGet, "/api/catalogue", testAdminToken, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("= %d: %s", rec.Code, rec.Body.String())
+		}
+		decode(t, rec, &body)
+
+		if len(body.Data) != 1 {
+			t.Fatalf("catalogue = %+v, want only the free model", body.Data)
+		}
+		if body.Data[0].Model != "gratis" || !body.Data[0].Free {
+			t.Errorf("catalogue = %+v, want the zero-priced model", body.Data[0])
+		}
+	})
+
+	t.Run("new arrivals", func(t *testing.T) {
+		var body struct {
+			Data []db.NewModel `json:"data"`
+		}
+		rec := do(t, h, http.MethodGet, "/api/new-models", testAdminToken, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("= %d: %s", rec.Code, rec.Body.String())
+		}
+		decode(t, rec, &body)
+
+		if len(body.Data) != 1 || body.Data[0].Model != "gratis" {
+			t.Errorf("new arrivals = %+v, want only the free model", body.Data)
+		}
+	})
+
+	t.Run("traffic and the catalogue it is paired with", func(t *testing.T) {
+		var body struct {
+			Usage     []db.ModelBreakdown `json:"usage"`
+			Catalogue []struct {
+				Model string `json:"model"`
+			} `json:"catalogue"`
+		}
+		rec := do(t, h, http.MethodGet, "/api/models", testAdminToken, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("= %d: %s", rec.Code, rec.Body.String())
+		}
+		decode(t, rec, &body)
+
+		if len(body.Usage) != 1 || body.Usage[0].Model != "gratis" {
+			t.Errorf("usage = %+v, want only the free model", body.Usage)
+		}
+		if len(body.Catalogue) != 1 || body.Catalogue[0].Model != "gratis" {
+			t.Errorf("catalogue pairing = %+v, want only the free model", body.Catalogue)
+		}
+	})
+
+	t.Run("scores", func(t *testing.T) {
+		var body struct {
+			Data []modelScore `json:"data"`
+		}
+		rec := do(t, h, http.MethodGet, "/api/scores", testAdminToken, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("= %d: %s", rec.Code, rec.Body.String())
+		}
+		decode(t, rec, &body)
+
+		if len(body.Data) != 1 || body.Data[0].Model != "gratis" {
+			t.Errorf("scores = %+v, want only the free model", body.Data)
+		}
+	})
+
+	t.Run("status picker", func(t *testing.T) {
+		var body struct {
+			Routing struct {
+				DefaultModel string   `json:"default_model"`
+				Choices      []string `json:"choices"`
+			} `json:"routing"`
+		}
+		rec := do(t, h, http.MethodGet, "/api/active", testAdminToken, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("= %d: %s", rec.Code, rec.Body.String())
+		}
+		decode(t, rec, &body)
+
+		// The built-in fallback is priced, so offering it would preview a
+		// chain free-only routing never plans.
+		if body.Routing.DefaultModel == "" {
+			t.Fatal("no default model was reported")
+		}
+		var hasAuto bool
+		for _, name := range body.Routing.Choices {
+			if name == body.Routing.DefaultModel {
+				t.Errorf("the picker offers the priced default %q: %v", name, body.Routing.Choices)
+			}
+			if name == "auto" {
+				hasAuto = true
+			}
+		}
+		if !hasAuto {
+			t.Errorf("the routing aliases vanished: %v", body.Routing.Choices)
+		}
+	})
 }
 
 // The management surface is now flat: mint a key, list keys, revoke a key.
@@ -290,8 +408,10 @@ func TestFreeOnlyToggleIsPersisted(t *testing.T) {
 		FreeModels int  `json:"free_models"`
 	}
 	decode(t, rec, &settings)
-	if settings.FreeOnly {
-		t.Fatal("free-only is on by default")
+	// The default is on: this deployment starts free-only, and FREE_ONLY only
+	// sets the starting value for a fresh deployment.
+	if !settings.FreeOnly {
+		t.Fatal("free-only is off by default")
 	}
 
 	// Nothing free is known here, so turning it on would refuse every request.
@@ -814,6 +934,11 @@ func TestPlaygroundReportsWhatAnswered(t *testing.T) {
 	h, database, cfg := liveHandlerWith(t, func(c *config.Config) {
 		c.ProviderBaseURLs["openai"] = upstream.URL + "/v1"
 		c.RoutingMode = "off"
+		// The stand-in answers as a priced model: this run is about what the
+		// playground reports back, and free-only would refuse the model
+		// before the call was ever made. The guardrail itself is covered by
+		// the gateway's free-only tests.
+		c.FreeOnly = false
 	})
 	if err := db.StoreProviderKey(database, cfg.EncryptionKey, "openai", "sk-test"); err != nil {
 		t.Fatal(err)
@@ -863,6 +988,10 @@ func TestPlaygroundIsNotBilledToAnyKey(t *testing.T) {
 	h, database, cfg := liveHandlerWith(t, func(c *config.Config) {
 		c.ProviderBaseURLs["openai"] = upstream.URL + "/v1"
 		c.RoutingMode = "off"
+		// A priced model stands in for whatever upstream serves; what is
+		// under test is who the call is billed to. The guardrail itself is
+		// covered by the gateway's free-only tests.
+		c.FreeOnly = false
 	})
 	if err := db.StoreProviderKey(database, cfg.EncryptionKey, "openai", "sk-test"); err != nil {
 		t.Fatal(err)
@@ -907,11 +1036,11 @@ func TestChatValidatesInput(t *testing.T) {
 	h, _, _ := liveHandler(t)
 
 	for name, body := range map[string]string{
-		"no messages":          `{"model":"auto"}`,
-		"empty messages list":  `{"model":"auto","messages":[]}`,
-		"blank message":        `{"model":"auto","messages":[{"role":"user","content":"  "}]}`,
-		"invalid role":         `{"model":"auto","messages":[{"role":"invalid","content":"hi"}]}`,
-		"malformed":            `not json`,
+		"no messages":         `{"model":"auto"}`,
+		"empty messages list": `{"model":"auto","messages":[]}`,
+		"blank message":       `{"model":"auto","messages":[{"role":"user","content":"  "}]}`,
+		"invalid role":        `{"model":"auto","messages":[{"role":"invalid","content":"hi"}]}`,
+		"malformed":           `not json`,
 	} {
 		if rec := do(t, h, http.MethodPost, "/api/chat", testAdminToken, body); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s = %d, want 400", name, rec.Code)
@@ -925,6 +1054,10 @@ func TestChatMultiTurnResponse(t *testing.T) {
 	h, database, cfg := liveHandlerWith(t, func(c *config.Config) {
 		c.ProviderBaseURLs["openai"] = upstream.URL + "/v1"
 		c.RoutingMode = "off"
+		// The stand-in answers as a priced model: what is under test is the
+		// history being carried across turns, not which model is allowed.
+		// The guardrail itself is covered by the gateway's free-only tests.
+		c.FreeOnly = false
 	})
 	if err := db.StoreProviderKey(database, cfg.EncryptionKey, "openai", "sk-test"); err != nil {
 		t.Fatal(err)
@@ -956,7 +1089,6 @@ func TestChatMultiTurnResponse(t *testing.T) {
 		t.Errorf("tokens = %d in / %d out, want 11/5", result.TokensIn, result.TokensOut)
 	}
 }
-
 
 // newPlaygroundUpstream answers a completion with a known body.
 func newPlaygroundUpstream(t *testing.T) *httptest.Server {

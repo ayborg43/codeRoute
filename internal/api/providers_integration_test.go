@@ -44,6 +44,11 @@ func providerHandler(t *testing.T, upstream string) (http.Handler, *sql.DB, *con
 
 	return liveHandlerWith(t, func(c *config.Config) {
 		c.ProviderBaseURLs["openai"] = upstream + "/v1"
+		// The upstream stands in for a provider and answers with a priced
+		// model; these tests are about key lifecycle, and free-only would
+		// keep that model out of the advertised list. The guardrail itself is
+		// covered by the gateway's free-only tests.
+		c.FreeOnly = false
 	})
 }
 

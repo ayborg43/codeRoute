@@ -85,6 +85,11 @@ func responsesClient(t *testing.T, u *responsesUpstream) (http.Handler, string) 
 	h, database, cfg := liveHandlerWith(t, func(c *config.Config) {
 		c.ProviderBaseURLs["openai"] = u.server.URL + "/v1"
 		c.RoutingMode = "off"
+		// The stand-in answers as a priced model: these tests are about the
+		// translation between the two APIs, and free-only would refuse it
+		// before the translation was ever reached. The guardrail itself is
+		// covered by the gateway's free-only tests.
+		c.FreeOnly = false
 	})
 	if err := db.StoreProviderKey(database, cfg.EncryptionKey, "openai", "sk-test"); err != nil {
 		t.Fatal(err)
