@@ -83,7 +83,7 @@ func TestProviderKeyLifecycle(t *testing.T) {
 	// The vendors this build ships presets for must all be offered.
 	for _, want := range []string{"openai", "anthropic", "google", "openrouter", "groq",
 		"sambanova", "mistral", "nvidia", "huggingface", "gmicloud", "xai",
-		"xkiro", "teamorouter", "bai"} {
+		"xkiro", "teamorouter", "bai", "opencode"} {
 		if _, ok := byName[want]; !ok {
 			t.Errorf("preset %q is not offered", want)
 		}

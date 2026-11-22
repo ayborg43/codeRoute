@@ -97,6 +97,8 @@ var presets = []Spec{
 		Label: "TeamoRouter", ConsoleURL: "https://teamorouter.com"},
 	{Name: "bai", Kind: KindOpenAI, BaseURL: "https://api.b.ai/v1",
 		Label: "B.AI", ConsoleURL: "https://chat.b.ai"},
+	{Name: "opencode", Kind: KindOpenAI, BaseURL: "https://opencode.ai/zen/v1",
+		Label: "OpenCode Zen", ConsoleURL: "https://opencode.ai/auth", FreeTier: true},
 }
 
 // Presets returns a copy of the built-in provider list.

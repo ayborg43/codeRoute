@@ -165,11 +165,11 @@ message, so neither reveals who has an account.
 
 ## Providers
 
-Seventeen are built in — OpenAI, Anthropic, Google Gemini, OpenRouter, Groq,
+Eighteen are built in — OpenAI, Anthropic, Google Gemini, OpenRouter, Groq,
 SambaNova, Mistral, NVIDIA NIM, Hugging Face, GMI Cloud, xAI, DeepSeek,
-Together, Cerebras, xKiro, TeamoRouter and B.AI. All appear in the dashboard;
-paste a key to enable one. Every base URL was checked against the live
-endpoint.
+Together, Cerebras, xKiro, TeamoRouter, B.AI and OpenCode Zen. All appear in
+the dashboard; paste a key to enable one. Every base URL was checked against
+the live endpoint.
 
 TeamoRouter is reachable at `api.teamorouter.com` (the preset) and also at
 `api.teamorouter.cn`, which its own site advertises. Switch with
