@@ -30,10 +30,19 @@ type Spec struct {
 	// ConsoleURL is where a user goes to get a key for this provider.
 	ConsoleURL string `json:"console_url,omitempty"`
 
-	// FreeTier notes that the provider offers usable free access. It is
-	// advisory only: it never causes a model to be treated as free, because
-	// a free account tier is not the same as a zero-priced model.
+	// FreeTier notes that the provider offers usable free access. On its own
+	// it is advisory only: it never causes a model to be treated as free,
+	// because a free account tier is not the same as a zero-priced model.
 	FreeTier bool `json:"free_tier,omitempty"`
+
+	// AssumedFree marks a provider whose models cost nothing but whose API
+	// publishes no prices at all. Without this, every model it serves is
+	// unpriced, and unpriced is never free — so they would never be probed,
+	// listed or routed to, however usable they are. It is a statement about
+	// the provider's access terms, not a guess from a model name: set it only
+	// where the whole catalogue is free to use (NVIDIA's NIM API is the
+	// example), never on a provider that merely has a free tier.
+	AssumedFree bool `json:"assumed_free,omitempty"`
 
 	// PublicModels marks a provider whose /models endpoint answers without
 	// authentication. Saving a key for one of these proves the endpoint is
@@ -63,8 +72,11 @@ var presets = []Spec{
 		Label: "SambaNova", ConsoleURL: "https://cloud.sambanova.ai/apis", FreeTier: true, PublicModels: true},
 	{Name: "mistral", Kind: KindOpenAI, BaseURL: "https://api.mistral.ai/v1",
 		Label: "Mistral", ConsoleURL: "https://console.mistral.ai/api-keys", FreeTier: true},
+	// NVIDIA publishes model ids and nothing else — no pricing block at all —
+	// while its NIM API is free to use. AssumedFree is what makes its models
+	// visible and routable.
 	{Name: "nvidia", Kind: KindOpenAI, BaseURL: "https://integrate.api.nvidia.com/v1",
-		Label: "NVIDIA NIM", ConsoleURL: "https://build.nvidia.com", FreeTier: true, PublicModels: true},
+		Label: "NVIDIA NIM", ConsoleURL: "https://build.nvidia.com", FreeTier: true, AssumedFree: true, PublicModels: true},
 	{Name: "huggingface", Kind: KindOpenAI, BaseURL: "https://router.huggingface.co/v1",
 		Label: "Hugging Face", ConsoleURL: "https://huggingface.co/settings/tokens", FreeTier: true, PublicModels: true},
 	{Name: "gmicloud", Kind: KindOpenAI, BaseURL: "https://api.gmi-serving.com/v1",

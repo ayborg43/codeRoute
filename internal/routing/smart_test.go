@@ -3,6 +3,8 @@ package routing
 import (
 	"math"
 	"testing"
+
+	"github.com/coderouter/coderouter/internal/provider"
 )
 
 func TestDetectTask(t *testing.T) {
@@ -16,6 +18,39 @@ func TestDetectTask(t *testing.T) {
 		if got := DetectTask(prompt); got != want {
 			t.Errorf("DetectTask(%q) = %q, want %q", prompt, got, want)
 		}
+	}
+}
+
+// Free means "costs nothing": a published zero, or a provider whose catalogue
+// is free but whose API states no prices. Merely unpriced is neither.
+func TestFreeCoversPublishedZeroAndAssumedFree(t *testing.T) {
+	published := ModelProfile{Model: "gratis", PriceKnown: true}
+	assumed := ModelProfile{Model: "nim", AssumedFree: true}
+	unknown := ModelProfile{Model: "mystery"}
+	priced := ModelProfile{Model: "dear", PriceKnown: true, InputCostPer1M: 1, OutputCostPer1M: 2}
+
+	if !published.Free() {
+		t.Error("a published zero price was not free")
+	}
+	if !assumed.Free() {
+		t.Error("an assumed-free model was not free")
+	}
+	if unknown.Free() {
+		t.Error("an unpriced model with no assumption was treated as free")
+	}
+	if priced.Free() {
+		t.Error("a priced model was treated as free")
+	}
+
+	c := NewCatalog()
+	c.SetDiscovered("nvidia", []provider.DiscoveredModel{
+		{Provider: "nvidia", Model: "nim", AssumedFree: true},
+		{Provider: "nvidia", Model: "mystery"},
+	})
+
+	free := c.FreeModels()
+	if len(free) != 1 || free[0].Model != "nim" {
+		t.Fatalf("FreeModels() = %v, want just nim", free)
 	}
 }
 

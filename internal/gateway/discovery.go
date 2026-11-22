@@ -23,12 +23,30 @@ func (g *Gateway) LoadDiscoveredModels(ctx context.Context) error {
 	}
 
 	for name, models := range byProvider {
+		g.assumeFree(name, models)
 		g.catalog.SetDiscovered(name, models)
 	}
 	if len(byProvider) > 0 {
 		log.Printf("discovery: loaded cached model lists for %d providers", len(byProvider))
 	}
 	return nil
+}
+
+// assumeFree applies a provider's unpublished-price assumption to a model
+// list. Discovery sets it while parsing, but a list restored from a previous
+// run stores published prices and nothing about this deployment's assumptions,
+// so it has to be applied again on load — otherwise a restart would quietly
+// drop the provider's models out of free-only routing until the next refresh.
+func (g *Gateway) assumeFree(name string, models []provider.DiscoveredModel) {
+	spec, ok := g.Spec(name)
+	if !ok || !spec.AssumedFree {
+		return
+	}
+	for i := range models {
+		if !models[i].PriceKnown {
+			models[i].AssumedFree = true
+		}
+	}
 }
 
 // RefreshModels asks every provider holding a key what it serves, and records

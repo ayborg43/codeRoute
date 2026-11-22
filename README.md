@@ -277,6 +277,17 @@ alternative is assuming zero and quietly spending money. Several providers do
 offer genuinely free *account tiers* — that's a property of your account, not
 of a model, so the gateway flags it in the dashboard but won't route on it.
 
+The exception is a provider marked **assumed free**: one whose whole catalogue
+is free to use but whose API states no prices at all. NVIDIA's NIM API is the
+case that prompted it — `/models` returns 33 ids and no pricing block, so its
+models were never probed, never listed and never routed to. For such a
+provider, an unpriced model counts as free and enters the free pool: it is
+probed, listed and routed like any other free model. Prices are still never
+invented — the listing reports `free: true` with no cost fields. The mark is a
+statement about the provider's access terms, set per preset
+(`assumed_free` on the provider spec), and a published non-zero price always
+wins over it.
+
 ### A caveat on key verification
 
 Saving a key checks it against the provider. For four presets — OpenRouter,

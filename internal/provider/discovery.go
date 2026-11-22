@@ -26,11 +26,21 @@ type DiscoveredModel struct {
 	OutputCostPer1M float64
 	PriceKnown      bool
 
+	// AssumedFree records that the provider publishes no prices and is known
+	// to serve its catalogue at no charge, so this model counts as free.
+	// PriceKnown stays false: the gateway still refuses to quote a price it
+	// was never given, it just stops treating "unstated" as "maybe costly".
+	AssumedFree bool
+
 	ContextLength int
 }
 
-// Free reports whether the model is published as costing nothing.
+// Free reports whether the model costs nothing: either a published zero price,
+// or a provider whose catalogue is free but whose API says nothing about it.
 func (m DiscoveredModel) Free() bool {
+	if m.AssumedFree {
+		return true
+	}
 	return m.PriceKnown && m.InputCostPer1M == 0 && m.OutputCostPer1M == 0
 }
 
@@ -227,6 +237,12 @@ func ListModels(ctx context.Context, client *http.Client, spec Spec, apiKey stri
 		}
 		if in, out, ok := m.Pricing.perMillion(); ok && in >= 0 && out >= 0 {
 			dm.InputCostPer1M, dm.OutputCostPer1M, dm.PriceKnown = in, out, true
+		} else if spec.AssumedFree {
+			// Nothing published, and this provider's catalogue is free to
+			// use, so the model is free in fact even though no zero price
+			// was stated. A published price always wins, so an assumption
+			// can never hide a real cost.
+			dm.AssumedFree = true
 		}
 		out = append(out, dm)
 	}

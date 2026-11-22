@@ -43,15 +43,24 @@ type ModelProfile struct {
 	// unpriced is not the same as free.
 	PriceKnown bool `json:"-"`
 
+	// AssumedFree marks a model whose provider publishes no prices but serves
+	// its catalogue at no charge. It is free without being priced: no cost is
+	// quoted, because none was ever stated.
+	AssumedFree bool `json:"-"`
+
 	// Reliability is what this deployment's own traffic says about the model.
 	// Empty until enough calls have been made to say anything.
 	Reliability Reliability `json:"-"`
 }
 
-// Free reports whether the model is published as costing nothing. A model with
-// no published price is never free — that distinction is what keeps free-only
-// routing from quietly spending money.
+// Free reports whether the model costs nothing: published at zero, or served by
+// a provider whose catalogue is free but whose API publishes no prices. A model
+// that is merely unpriced is never free — that distinction is what keeps
+// free-only routing from quietly spending money.
 func (p ModelProfile) Free() bool {
+	if p.AssumedFree {
+		return true
+	}
 	return p.PriceKnown && p.InputCostPer1M == 0 && p.OutputCostPer1M == 0
 }
 
@@ -393,6 +402,7 @@ func (c *Catalog) SetDiscovered(providerName string, models []provider.Discovere
 			InputCostPer1M:  m.InputCostPer1M,
 			OutputCostPer1M: m.OutputCostPer1M,
 			PriceKnown:      m.PriceKnown,
+			AssumedFree:     m.AssumedFree,
 			// Discovered models carry no task suitability, so they are never
 			// picked by task-based smart routing — only named, or chosen from
 			// the free pool.

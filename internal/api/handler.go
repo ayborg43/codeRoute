@@ -228,8 +228,15 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 
 		entry := modelEntry{ID: p.Model, Object: "model", OwnedBy: p.Provider}
 		if p.PriceKnown {
-			in, out, free := p.InputCostPer1M, p.OutputCostPer1M, p.Free()
-			entry.InputCostPer1M, entry.OutputCostPer1M, entry.Free = &in, &out, &free
+			in, out := p.InputCostPer1M, p.OutputCostPer1M
+			entry.InputCostPer1M, entry.OutputCostPer1M = &in, &out
+		}
+		// A free model is advertised as such even when its provider publishes
+		// no price, so a client can see it costs nothing without being shown a
+		// zero the provider never stated.
+		if p.PriceKnown || p.Free() {
+			free := p.Free()
+			entry.Free = &free
 		}
 		data = append(data, entry)
 	}

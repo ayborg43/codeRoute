@@ -84,8 +84,10 @@ const (
 func ScoreWithEvidence(p ModelProfile, task TaskType, obj Objective) float64 {
 	score := Score(p, obj)
 
-	// An unstated price is not a zero one.
-	if !p.PriceKnown && obj != ObjectiveLatency {
+	// An unstated price is not a zero one — unless the provider's catalogue
+	// is free, in which case charging a phantom price would simply rank a
+	// free model below a priced one.
+	if !p.PriceKnown && !p.AssumedFree && obj != ObjectiveLatency {
 		score += assumedCostPer1M
 	}
 
