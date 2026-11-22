@@ -159,9 +159,11 @@ func (h *Handler) dashboardModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Same filter as the list views: a latency estimate is only worth showing
+	// for a model a probe has shown to work.
 	catalogue := []map[string]any{}
 	seen := map[string]bool{}
-	for _, p := range catalog.FreeModels() {
+	for _, p := range catalog.ConfirmedOnly(catalog.FreeModels()) {
 		key := routing.ObservationKey(p.Provider, p.Model)
 		if seen[key] {
 			continue
@@ -196,7 +198,10 @@ func (h *Handler) dashboardCatalogue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	catalog := h.gw.Catalog()
-	pool := catalog.FreeModels()
+	// Only models a probe has shown to work: the table is the lineup, and
+	// listing something routing will not use would invite marking or
+	// blacklisting a model that cannot serve a request anyway.
+	pool := catalog.ConfirmedOnly(catalog.FreeModels())
 
 	if want := r.URL.Query().Get("provider"); want != "" {
 		filtered := pool[:0:0]
@@ -292,7 +297,17 @@ func (h *Handler) dashboardNewModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": added})
+	// Once a sweep has run, a new model appears here when it starts working:
+	// a name that only ever earns a refusal is not news an operator can use.
+	catalog := h.gw.Catalog()
+	working := added[:0]
+	for _, m := range added {
+		if !catalog.ProbedAny() || catalog.Confirmed(m.Provider, m.Model) {
+			working = append(working, m)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": working})
 }
 
 // dashboardScores reports what this deployment's own traffic says about each

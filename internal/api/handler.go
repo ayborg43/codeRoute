@@ -213,6 +213,11 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 		pool = append(pool, catalog.Profiles()...)
 	}
 
+	// Advertise only models a probe has shown to work, so a client picking
+	// from this list does not choose something this account cannot use. The
+	// sweep re-tests refused models, so a recovered one reappears here.
+	pool = catalog.ConfirmedOnly(pool)
+
 	seen := make(map[string]bool)
 	data := []modelEntry{}
 	for _, p := range pool {

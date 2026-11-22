@@ -679,14 +679,21 @@ func (c *Catalog) Probed(providerName, model string) bool {
 }
 
 // AnyConfirmed reports whether probing has established anything at all.
-//
-// This is what makes the preference safe to apply: until a sweep has run there
-// is nothing to prefer, and treating an unprobed deployment as "nothing works"
-// would make it unroutable.
 func (c *Catalog) AnyConfirmed() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.confirmed) > 0
+}
+
+// ProbedAny reports whether any sweep has run, whether or not it found a
+// model that works. This — not AnyConfirmed — is what makes filtering safe:
+// until a sweep has run, every model is unknown and must stay routable, while
+// a sweep that confirmed nothing means nothing works, and filtering to an
+// empty set is the honest answer rather than quietly re-enabling everything.
+func (c *Catalog) ProbedAny() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.probedAt) > 0
 }
 
 // SetBlacklist replaces the operator's routing exclusions wholesale, matching
@@ -739,14 +746,13 @@ func (c *Catalog) PreferConfirmed(pool []ModelProfile) []ModelProfile {
 	return out
 }
 
-// ConfirmedOnly narrows a pool to models a probe has shown to work, where
-// any such model exists. Once at least one model is confirmed, the refused
-// ones are kept out of routing (but stay watched: every sweep re-probes
-// them, and a recovered model re-enters automatically). Until anything is
-// confirmed the pool is returned untouched, so a fresh deployment routes on
-// price rather than refusing everything while the first sweep is pending.
+// ConfirmedOnly narrows a pool to models a probe has shown to work. Refused
+// models stay watched: every sweep re-probes them, and a recovered model
+// re-enters automatically. Until the first sweep finishes the pool is returned
+// untouched, so a fresh deployment routes on price rather than refusing
+// everything before it has checked anything.
 func (c *Catalog) ConfirmedOnly(pool []ModelProfile) []ModelProfile {
-	if !c.AnyConfirmed() {
+	if !c.ProbedAny() {
 		return pool
 	}
 

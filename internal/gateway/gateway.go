@@ -530,8 +530,8 @@ func (g *Gateway) planCandidates(req *provider.ChatRequest, keys map[string]stri
 }
 
 // usable narrows automatic candidates to those actually worth an attempt: the
-// provider must hold a key, still list the model, and not have refused it
-// recently.
+// provider must hold a key, still list the model, not have refused it
+// recently, and a probe must have shown it working.
 //
 // The staleness check matters because the curated catalogue is hand-written
 // and vendors retire models. Without it a retired entry keeps its slot in the
@@ -541,10 +541,10 @@ func (g *Gateway) usable(in []candidate, keys map[string]string) []candidate {
 	for _, c := range in {
 		switch {
 		case keys[c.provider] == "":
-		case g.benched(c):
 		case !g.catalog.ServesModel(c.provider, c.model):
 			log.Printf("routing: %s no longer lists %s; leaving it out of automatic routing",
 				c.provider, c.model)
+		case !g.available(c):
 		default:
 			out = append(out, c)
 		}
@@ -580,14 +580,14 @@ func (g *Gateway) freeNamed(model string, keys map[string]string) []candidate {
 }
 
 // available reports whether a model may be routed to right now: it must not
-// be benched from real traffic, and once probing has confirmed anything, it
-// must be one of the confirmed-working models. Unavailable models stay out
-// of the chain but are re-probed every sweep, so recovery is automatic.
+// be benched from real traffic, and once probing has run, it must be one of
+// the confirmed-working models. Unavailable models stay out of the chain but
+// are re-probed every sweep, so recovery is automatic.
 func (g *Gateway) available(c candidate) bool {
 	if g.benched(c) {
 		return false
 	}
-	if g.catalog.AnyConfirmed() && !g.catalog.Confirmed(c.provider, c.model) {
+	if g.catalog.ProbedAny() && !g.catalog.Confirmed(c.provider, c.model) {
 		return false
 	}
 	return true
@@ -620,7 +620,7 @@ func (g *Gateway) freeCandidates(keys map[string]string, task routing.TaskType, 
 	pool := g.restrictToTagged(g.catalog.FreeModels(), task)
 	pool = g.catalog.ConfirmedOnly(pool)
 	pool = g.catalog.RankForTask(pool, task, g.objectiveFor(intent))
-	return g.pickOnePerProvider(g.catalog.PreferConfirmed(pool), keys)
+	return g.pickOnePerProvider(pool, keys)
 }
 
 // restrictToTagged narrows a pool to the models an operator marked for the
@@ -694,10 +694,10 @@ func (g *Gateway) discoveredCandidates(keys map[string]string, task routing.Task
 		return !sa && sb
 	})
 
-	// Models a probe has confirmed working move to the front. Applied last so
-	// it outranks price and inference: knowing a model answers for this
-	// account is worth more than knowing it is cheap.
-	pool = g.catalog.PreferConfirmed(pool)
+	// Only models a probe has confirmed working are routed to. Applied last so
+	// it outranks price and inference: a cheap model that refuses this account
+	// is worth nothing, and the sweep keeps re-testing the refusals.
+	pool = g.catalog.ConfirmedOnly(pool)
 
 	return g.pickOnePerProvider(pool, keys)
 }

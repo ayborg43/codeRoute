@@ -206,8 +206,11 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.LatencyFeedback != 5*time.Minute {
 		t.Errorf("default latency feedback = %s", cfg.LatencyFeedback)
 	}
-	if cfg.ProbeInterval != 6*time.Hour {
+	if cfg.ProbeInterval != 10*time.Minute {
 		t.Errorf("default probe interval = %s", cfg.ProbeInterval)
+	}
+	if cfg.DiscoveryInterval != 10*time.Minute {
+		t.Errorf("default discovery interval = %s", cfg.DiscoveryInterval)
 	}
 	if cfg.ProbeModelsPerProvider != 3 {
 		t.Errorf("default probe breadth = %d", cfg.ProbeModelsPerProvider)

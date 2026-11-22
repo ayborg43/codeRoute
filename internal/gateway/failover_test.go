@@ -433,9 +433,9 @@ func (g *Gateway) mustPlan(t *testing.T, keys map[string]string) []candidate {
 	return cands
 }
 
-// A probe result is evidence about this account, so a confirmed model should
-// be reached before one nothing is known about — even a cheaper one.
-func TestConfirmedModelsAreTriedFirst(t *testing.T) {
+// Once a sweep has run, only the models it confirmed working are routed to —
+// even when an unconfirmed one is cheaper.
+func TestOnlyConfirmedModelsAreRoutedTo(t *testing.T) {
 	g := testGateway(t, "auto", "cost")
 	g.cfg.AttemptsPerProvider = 3
 
@@ -453,15 +453,16 @@ func TestConfirmedModelsAreTriedFirst(t *testing.T) {
 	g.catalog.SetConfirmed(map[string]bool{
 		routing.TagKey("p", "dearer-confirmed"): true,
 	})
+	g.catalog.MarkProbed([]string{routing.TagKey("p", "cheap-unknown")})
 
 	cands, _ = g.plan(chatRequest(), keysFor("p"))
 	if len(cands) == 0 || cands[0].model != "dearer-confirmed" {
-		t.Errorf("chain leads with %+v; a confirmed model should come first", cands)
+		t.Fatalf("chain = %+v; the confirmed model should be the only route", cands)
 	}
-	// The unconfirmed one is kept as a fallback, not discarded: not probed is
-	// not the same as broken.
-	if len(cands) < 2 {
-		t.Error("the unprobed model was dropped rather than kept as a fallback")
+	for _, c := range cands {
+		if c.model == "cheap-unknown" {
+			t.Errorf("an unconfirmed model stayed in the chain: %+v", cands)
+		}
 	}
 }
 

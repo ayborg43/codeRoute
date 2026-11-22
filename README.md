@@ -106,15 +106,15 @@ into their own formats. Hosted tools (`web_search`, `file_search`, …) and
 | `ROUTING_OBJECTIVE` | `balanced` | `balanced`, `latency`, or `cost` |
 | `PROVIDERS` | all presets | Narrow the provider list, or add one with `name=url` |
 | `FREE_ONLY` | `true` | Initial free-only setting; the dashboard button overrides it |
-| `DISCOVERY_INTERVAL` | `1h` | How often each provider is asked what it serves |
+| `DISCOVERY_INTERVAL` | `10m` | How often each provider is asked what it serves |
 | `MODEL_CATALOG` / `MODEL_CATALOG_PATH` | built-ins | Override or extend the curated catalogue |
 | `LATENCY_FEEDBACK_INTERVAL` | `5m` | How often observed behaviour is folded back into ranking; `0` disables |
 | `OBSERVATION_WINDOW` | `6h` | How far back routing looks when judging a model |
 | `ROUTING_ATTEMPTS_PER_PROVIDER` | `2` | Models one request may try at each provider before moving on |
 | `ROUTING_MAX_ATTEMPTS` | `8` | Cap on *retries*; every provider is always tried at least once |
-| `PROBE_INTERVAL` | `6h` | How often to check which models actually work; `0` disables |
-| `PROBE_MODELS_PER_PROVIDER` | `3` | How many models a sweep checks at each provider |
-| `PROBE_FRESHNESS` | `24h` | How long a probe result is trusted |
+| `PROBE_INTERVAL` | `10m` | How often to check which models actually work; `0` disables |
+| `PROBE_MODELS_PER_PROVIDER` | `3` | How many models a sweep checks at each provider (free mode checks all free ones) |
+| `PROBE_FRESHNESS` | `1h` | How long a probe result is trusted |
 
 ### Semantic cache
 
@@ -213,8 +213,13 @@ takes the head of each provider's ranked list — `PROBE_MODELS_PER_PROVIDER`,
 three by default — plus anything you have marked, since routing is restricted
 to those.
 
-**Confirmed working is a preference, not a filter.** A model nobody has probed
-is unknown, not broken, so it stays in the chain behind the confirmed ones.
+**Confirmed working is a filter.** Both `/v1/models` and the dashboard's
+model list show only models a probe has confirmed, and routing only uses those:
+a model that refuses this account is not a fallback worth spending a round
+trip on. Every sweep retries the refusals, so a model whose allowance returns
+re-enters routing on its own. Before the first sweep finishes nothing is
+confirmed yet, and the full list stands.
+
 Results expire after `PROBE_FRESHNESS`, because an account that had credit
 yesterday may not today.
 
