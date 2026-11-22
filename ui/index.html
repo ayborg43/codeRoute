@@ -161,6 +161,15 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
 .hop.sidelined{opacity:.6;text-decoration:line-through}
 .hop-arrow{color:var(--faint)}
 .pager .btn[disabled]{opacity:.45;cursor:default;pointer-events:none}
+.tabs{display:flex;gap:.1rem;overflow-x:auto;overscroll-behavior-x:contain;border-bottom:1px solid var(--border);margin-bottom:1.5rem;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{appearance:none;-webkit-appearance:none;background:none;border:none;border-radius:0;border-bottom:2px solid transparent;margin-bottom:-1px;color:var(--muted);font-family:inherit;font-size:.8125rem;font-weight:600;padding:.75rem .9rem;cursor:pointer;white-space:nowrap;transition:color .15s ease,border-color .15s ease}
+.tab:hover{color:var(--text)}
+.tab[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent)}
+.panel{display:flex;flex-direction:column;gap:1.5rem}
+.panel[hidden]{display:none}
+.panel>.card,.panel>.endpoint{margin:0}
+.panel>.grid{margin-bottom:0}
 @media (max-width:640px){
   .nav{padding:.75rem 1rem;gap:.6rem}
   .nav h1{font-size:1rem}
@@ -174,6 +183,7 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
   #signout{order:2;margin-left:auto}
   #whoami{order:3;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .container{margin:1.25rem auto;padding:0 1rem}
+  .tab{padding:.7rem .6rem;font-size:.8125rem}
   .card{padding:1.15rem}
   .grid{gap:1rem}
   .stat{font-size:1.875rem}
@@ -234,6 +244,16 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
 <div class="container">
   <div id="banner" class="banner hidden"></div>
 
+  <nav class="tabs" role="tablist" aria-label="Dashboard sections">
+    <button type="button" class="tab" role="tab" data-tab="overview" aria-selected="true">Overview</button>
+    <button type="button" class="tab" role="tab" data-tab="playground" aria-selected="false">Playground</button>
+    <button type="button" class="tab" role="tab" data-tab="models" aria-selected="false">Models</button>
+    <button type="button" class="tab" role="tab" data-tab="providers" aria-selected="false">Providers</button>
+    <button type="button" class="tab" role="tab" data-tab="keys" aria-selected="false">API keys</button>
+    <button type="button" class="tab" role="tab" data-tab="usage" aria-selected="false">Usage</button>
+  </nav>
+
+  <section class="panel" id="panel-overview" role="tabpanel" aria-label="Overview">
   <div class="endpoint">
     <span class="label">Base URL</span>
     <code id="base-url">&nbsp;</code>
@@ -241,7 +261,7 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
     <span class="note">Point your editor here and use a client key below as the API key.</span>
   </div>
 
-  <div class="card" style="margin-bottom:1.5rem">
+  <div class="card">
     <h2>In use now</h2>
     <div class="live-head">
       <span class="live-dot" id="live-dot" aria-hidden="true"></span>
@@ -259,7 +279,18 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
     </div>
   </div>
 
-  <div class="card" style="margin-bottom:1.5rem">
+  <div class="grid">
+    <div class="card"><h2>Requests</h2><div class="stat" id="s-requests">0</div><div class="stat-label" id="s-errors">&nbsp;</div></div>
+    <div class="card"><h2>Avg Latency</h2><div class="stat" id="s-latency">0ms</div><div class="stat-label">Upstream calls only</div></div>
+    <div class="card"><h2>Cache Hit Rate</h2><div class="stat" id="s-cache">0%</div><div class="stat-label" id="s-cache-detail">&nbsp;</div></div>
+    <div class="card"><h2>Spend</h2><div class="stat" id="s-cost">$0.00</div><div class="stat-label" id="s-tokens">&nbsp;</div></div>
+    <div class="card"><h2>Tokens</h2><div class="stat" id="s-tokens-total">0</div><div class="stat-label" id="s-tokens-split">&nbsp;</div></div>
+    <div class="card"><h2>Providers</h2><div class="stat" id="s-providers">0</div><div class="stat-label" id="s-provider-list">&nbsp;</div></div>
+  </div>
+  </section>
+
+  <section class="panel" id="panel-playground" role="tabpanel" aria-label="Playground" hidden>
+  <div class="card">
     <h2>Chat</h2>
     <p class="hint">Chat with any free model. Pick a model or a routing alias
        (<code>auto</code>, <code>auto:code</code>, <code>auto:chat</code>,
@@ -282,7 +313,7 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
     </div>
   </div>
 
-  <div class="card" style="margin-bottom:1.5rem">
+  <div class="card">
     <h2>Playground</h2>
     <p class="hint">Send a prompt through the gateway and see which model
        actually answered, what it cost and how long it took. The picker lists
@@ -306,15 +337,9 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
     <div id="pg-result" class="pg-result hidden"></div>
   </div>
 
-  <div class="grid">
-    <div class="card"><h2>Requests</h2><div class="stat" id="s-requests">0</div><div class="stat-label" id="s-errors">&nbsp;</div></div>
-    <div class="card"><h2>Avg Latency</h2><div class="stat" id="s-latency">0ms</div><div class="stat-label">Upstream calls only</div></div>
-    <div class="card"><h2>Cache Hit Rate</h2><div class="stat" id="s-cache">0%</div><div class="stat-label" id="s-cache-detail">&nbsp;</div></div>
-    <div class="card"><h2>Spend</h2><div class="stat" id="s-cost">$0.00</div><div class="stat-label" id="s-tokens">&nbsp;</div></div>
-    <div class="card"><h2>Tokens</h2><div class="stat" id="s-tokens-total">0</div><div class="stat-label" id="s-tokens-split">&nbsp;</div></div>
-    <div class="card"><h2>Providers</h2><div class="stat" id="s-providers">0</div><div class="stat-label" id="s-provider-list">&nbsp;</div></div>
-  </div>
+  </section>
 
+  <section class="panel" id="panel-providers" role="tabpanel" aria-label="Providers" hidden>
   <div class="card">
     <h2>Provider Keys</h2>
     <p class="hint">Paste a key to enable a provider. Keys are stored encrypted
@@ -331,10 +356,12 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
         <tbody id="providers"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
       </table>
     </div>
-    <div id="provider-error" class="inline-error hidden"></div>
+        <div id="provider-error" class="inline-error hidden"></div>
   </div>
+  </section>
 
-  <div class="card" style="margin-top:1.5rem">
+  <section class="panel" id="panel-models" role="tabpanel" aria-label="Models" hidden>
+  <div class="card">
     <h2>Available Models</h2>
     <p class="hint">The <strong>free</strong> models the configured providers
        report they serve &mdash; the only ones this gateway routes to, so a
@@ -368,7 +395,7 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
     <div class="pager" id="catalogue-pager"></div>
   </div>
 
-  <div class="card" style="margin-top:1.5rem">
+  <div class="card">
     <h2>Model Scores</h2>
     <p class="hint">Measured from this deployment&rsquo;s own traffic &mdash; whether
        calls succeed and how fast they return. <strong>Not a measure of answer
@@ -391,7 +418,7 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
     </div>
   </div>
 
-  <div class="card" style="margin-top:1.5rem">
+  <div class="card">
     <h2>Recently Added Models</h2>
     <p class="hint">Providers are re-read on a schedule; anything that has
        appeared since is listed here. Free models only &mdash; a newly published
@@ -405,7 +432,7 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
     <div class="pager" id="new-models-pager"></div>
   </div>
 
-  <div class="card" style="margin-top:1.5rem">
+  <div class="card">
     <h2>Blacklisted Models</h2>
     <p class="hint">Models an operator has forbidden routing from choosing.
        This is a veto, not a preference &mdash; unlike an unmarked model, a
@@ -414,13 +441,15 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
        here.</p>
     <div class="scroll">
       <table>
-        <thead><tr><th>Model</th><th>Provider</th><th>Blacklisted since</th><th></th></tr></thead>
+        <thead><tr><th>Model</th><th>Provider</th><th>Blacklisted since</th><th></th></tr>      </thead>
         <tbody id="blacklist"><tr><td colspan="4" class="muted">Loading&hellip;</td></tr></tbody>
       </table>
     </div>
   </div>
+  </section>
 
-  <div class="card" style="margin-top:1.5rem">
+  <section class="panel" id="panel-keys" role="tabpanel" aria-label="API keys" hidden>
+  <div class="card">
     <h2>Client Keys</h2>
     <p class="hint">What you paste into your editor. View it again any time from
        this table. Revoking is the only way to cut a key off &mdash; keys carry
@@ -437,8 +466,10 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
     </div>
     <div id="key-display" class="key-display"></div>
   </div>
+  </section>
 
-  <div class="card" style="margin-top:1.5rem">
+  <section class="panel" id="panel-usage" role="tabpanel" aria-label="Usage" hidden>
+  <div class="card">
     <h2>Models</h2>
     <p class="hint">Per-model traffic over the window. Free models only, so a
        model that stopped being free disappears from here rather than sitting at
@@ -452,7 +483,7 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
     <div class="pager" id="models-pager"></div>
   </div>
 
-  <div class="card" style="margin-top:1.5rem">
+  <div class="card">
     <h2>Recent Activity</h2>
     <div class="scroll">
       <table>
@@ -462,6 +493,7 @@ dialog.err-modal::backdrop{background:rgba(15,23,42,.5);backdrop-filter:blur(2px
     </div>
     <div class="pager" id="usage-pager"></div>
   </div>
+  </section>
 </div>
 </div>
 
@@ -584,6 +616,7 @@ function showGate(message) {
 async function showApp() {
   $('gate').classList.add('hidden');
   $('app').classList.remove('hidden');
+  showTab((location.hash || '').slice(1), true);
 
   try {
     const me = await api('/api/me');
@@ -1574,6 +1607,29 @@ function handle(err) {
   if (err instanceof AuthError) { showGate(err.message); return; }
   banner(err.message);
 }
+
+// One section at a time: the dashboard is a lot of tables, and showing them all
+// at once buries the handful of numbers worth seeing first. The selection is
+// mirrored in the URL hash so a reload — or a bookmarked #models — lands in the
+// same place.
+const TABS = ['overview', 'playground', 'models', 'providers', 'keys', 'usage'];
+
+function showTab(name, fromHash) {
+  if (!TABS.includes(name)) name = 'overview';
+
+  TABS.forEach(t => { $('panel-' + t).hidden = t !== name; });
+  document.querySelectorAll('.tab').forEach(b =>
+    b.setAttribute('aria-selected', String(b.dataset.tab === name)));
+
+  if (!fromHash) history.replaceState(null, '', '#' + name);
+  // The status card keeps polling while hidden; bringing it into view should
+  // not show a number that went stale a moment ago.
+  if (name === 'overview') loadActive().catch(handle);
+}
+
+document.querySelectorAll('.tab').forEach(b =>
+  b.addEventListener('click', () => showTab(b.dataset.tab)));
+window.addEventListener('hashchange', () => showTab((location.hash || '').slice(1), true));
 
 async function refresh() {
   loadHealth();
